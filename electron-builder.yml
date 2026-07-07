@@ -1,0 +1,28 @@
+appId: studio.storyboardref.app
+productName: Storyboard Reference Studio
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+  # ffmpeg-static is external to the main bundle — ship the real package
+  # (the binary is what makes frame extraction and exports work on machines
+  # without ffmpeg).
+  - node_modules/ffmpeg-static/**
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+mac:
+  category: public.app-category.video
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # Unsigned by default. For distribution beyond your own machines, set
+  # identity + notarize (Apple Developer ID).
+  identity: null
+win:
+  target: nsis
+linux:
+  target: AppImage
+  category: Video
+npmRebuild: false
