@@ -13,10 +13,11 @@ asarUnpack:
   - node_modules/ffmpeg-static/**
 mac:
   category: public.app-category.video
-  icon: build/icon.icns
+  # No custom icon yet (Sam's logo is pending) — the default Electron icon is
+  # used. Drop a build/icon.icns in and add `icon: build/icon.icns` to brand it.
   target:
     - target: dmg
-      arch: [arm64, x64]
+      arch: [arm64]
   # Unsigned by default. For distribution beyond your own machines, set
   # identity + notarize (Apple Developer ID).
   identity: null
