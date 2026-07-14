@@ -162,6 +162,15 @@ Discovery and auth are automatic — the app writes a localhost-only port + bear
 
 See [DESIGN.md](DESIGN.md) (product brief) and [AGENTS.md](AGENTS.md) — the single source of truth for AI agents building or modifying this app: commands, repo map, hard rules (ffmpeg packaging, main-only Claude calls, `store.mutate`), the `window.__sbr` automation surface, and common-task recipes. Pure data + logic lives in `src/shared/`, imported by both the Electron main process and the React renderer.
 
+## Support
+
+A few people asked if they could send tips to support my work developing open source tools. So I set up an optional way in case anyone wants to.
+
+No pressure at all. Using the apps, sharing them, starring the repositories, and contributing code all help too. Thank you.
+
+- [GitHub Sponsors](https://github.com/sponsors/wassermanproductions)
+- [Ko-fi](https://ko-fi.com/samwasserman)
+
 ## License & credits
 
 **Apache License 2.0** — see [LICENSE](LICENSE). Free to use, modify, fork, and build on, commercially or otherwise.
