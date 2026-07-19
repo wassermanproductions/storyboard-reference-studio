@@ -131,6 +131,14 @@ Storyboard Reference Studio is the third app in Sam Wasserman's AI-filmmaking su
 
 ---
 
+## Install (macOS)
+
+One line — downloads the latest release and installs it, skipping the Gatekeeper "damaged app" false alarm that macOS shows for unsigned downloads:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wassermanproductions/storyboard-reference-studio/main/install.sh | bash
+```
+
 ## Install
 
 **Download** a release DMG (macOS, Apple Silicon) from GitHub Releases, or build from source:
