@@ -115,7 +115,12 @@ export async function exportPdf(input: ExportInput): Promise<PdfOutput> {
       height: 850,
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
     })
-    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    // Load from a temp file, NOT a data: URL — with real boards the embedded
+    // stills push the URL past Chromium's ~2MB cap and the load fails with
+    // ERR_INVALID_URL.
+    const htmlPath = join(workDir, 'print.html')
+    await writeFile(htmlPath, html, 'utf-8')
+    await win.loadFile(htmlPath)
     const pdf = await win.webContents.printToPDF({
       landscape: true,
       pageSize: 'A4',

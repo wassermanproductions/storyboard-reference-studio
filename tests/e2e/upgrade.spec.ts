@@ -6,7 +6,7 @@
  */
 
 import { _electron as electron, test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, existsSync, statSync, readFileSync, readdirSync } from 'fs'
+import { mkdtempSync, mkdirSync, existsSync, statSync, readFileSync, readdirSync } from 'fs'
 import { execFileSync } from 'child_process'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -194,6 +194,43 @@ test('exports a PDF storyboard (>10KB)', async () => {
   expect(out.ok, `pdf failed: ${out.error ?? ''}`).toBe(true)
   expect(existsSync(out.pdfPath)).toBe(true)
   expect(statSync(out.pdfPath).size).toBeGreaterThan(10_000)
+})
+
+test('exports a PDF from a big board (stills beyond the data-URL cap)', async () => {
+  test.setTimeout(180_000)
+  // Real boards embed full-res stills whose combined data URLs exceed
+  // Chromium's ~2MB URL limit — loading the print page via a data: URL
+  // fails with ERR_INVALID_URL. Guard the temp-file load path with eight
+  // high-entropy (poorly compressible) 1600×900 stills.
+  const bigDir = join(smokeDir, 'big-stills')
+  mkdirSync(bigDir, { recursive: true })
+  const bigStills: string[] = []
+  for (let i = 0; i < 8; i++) {
+    const p = join(bigDir, `noise-${i}.png`)
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', `nullsrc=s=1600x900,geq=random(${i + 1})*255:random(${i + 2})*255:random(${i + 3})*255`,
+      '-frames:v', '1', p
+    ])
+    bigStills.push(p)
+  }
+  const totalBytes = bigStills.reduce((n, p) => n + statSync(p).size, 0)
+  expect(totalBytes).toBeGreaterThan(2_000_000) // must actually exceed the URL cap
+
+  const out = await page.evaluate(async (stills: string[]) => {
+    const s = window.__sbr.store.getState()
+    const frames = stills.map((p, i) => ({
+      sourcePng: p,
+      label: `BIG ${i + 1}`, notes: '', promptText: '', profileId: 'midjourney',
+      crop: null, sourceWidth: 1600, sourceHeight: 900,
+      timeS: i, mediaName: 'noise.png', durationS: 2,
+      shot: { sceneNo: '1', shotNo: `${i + 1}`, shotSize: '', cameraAngle: '', lens: '', movement: '', transition: '' },
+      annotations: []
+    }))
+    const exportsRoot = `${s.projectFolder}/exports`
+    return window.sbr.exportPdf({ projectName: 'Big Board', exportsRoot, frames })
+  }, bigStills)
+  expect(out.ok, `big-board pdf failed: ${out.error ?? ''}`).toBe(true)
+  expect(statSync(out.pdfPath).size).toBeGreaterThan(100_000)
 })
 
 test('exports a shot-list CSV with a header + one row per frame', async () => {
