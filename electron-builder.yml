@@ -13,8 +13,7 @@ asarUnpack:
   - node_modules/ffmpeg-static/**
 mac:
   category: public.app-category.video
-  # No custom icon yet (Sam's logo is pending) — the default Electron icon is
-  # used. Drop a build/icon.icns in and add `icon: build/icon.icns` to brand it.
+  icon: build/icon.icns
   target:
     - target: dmg
       arch: [arm64]
@@ -23,6 +22,7 @@ mac:
   identity: null
 win:
   target: nsis
+  icon: build/icon.ico
 linux:
   target: AppImage
   category: Video

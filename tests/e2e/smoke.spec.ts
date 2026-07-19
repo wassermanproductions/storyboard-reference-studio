@@ -57,7 +57,7 @@ test.afterAll(async () => {
 })
 
 test('boots to the welcome screen', async () => {
-  await expect(page.locator('.wordmark')).toBeVisible()
+  await expect(page.locator('.welcome img[alt="Storyboard Reference Studio"]')).toBeVisible()
 })
 
 test('creates a project and imports the test clip', async () => {

@@ -52,7 +52,7 @@ test.afterAll(async () => {
 })
 
 test('boots and creates a project', async () => {
-  await expect(page.locator('.welcome img[alt="Storyboard Reference Studio"]')).toBeVisible()
+  await expect(page.locator('.wordmark')).toBeVisible()
   await page.getByRole('button', { name: 'New Project' }).click()
   await expect(page.locator('.workspace')).toBeVisible()
 })

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/logo.png" alt="Storyboard Reference Studio" width="340" />
+
 # STORYBOARD **REFERENCE**
 
 **Turn any reference imagery into stills + image-generator prompts — recreate any framing in your generator of choice.**

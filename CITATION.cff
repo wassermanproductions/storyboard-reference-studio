@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use Storyboard Reference Studio in your work, please cite it and credit Sam Wasserman (wassermanproductions.com), per the project's NOTICE and Section 4(d) of the Apache License 2.0."
+title: "Storyboard Reference Studio"
+abstract: "A desktop tool that turns any reference imagery into a working storyboard: auto-detect shots from clips, reframe and annotate stills with camera moves, fill shot metadata, and export animatics, PDF boards, shot lists, and image-generator-ready prompts (Midjourney, Flux, SDXL, and more)."
+type: software
+authors:
+  - family-names: "Wasserman"
+    given-names: "Sam"
+    website: "https://wassermanproductions.com"
+version: "1.2.0"
+date-released: "2026-07-19"
+license: "Apache-2.0"
+url: "https://github.com/wassermanproductions/storyboard-reference-studio"
+repository-code: "https://github.com/wassermanproductions/storyboard-reference-studio"
+keywords:
+  - storyboard
+  - filmmaking
+  - previs
+  - ai-image
+  - prompts
+  - shot-list
+  - animatic

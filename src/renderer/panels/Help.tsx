@@ -5,6 +5,8 @@
 
 import { useMemo, useState } from 'react'
 import { useStore } from '../store'
+import { Credits } from '../App'
+import logoUrl from '../assets/logo.png'
 
 const CARDS = [
   { emoji: '📥', title: 'Import reference', body: 'Import videos, images, or an audio scratch track into the bin, or paste a screenshot straight from the clipboard.' },
@@ -100,6 +102,18 @@ export function HelpOverlay(): JSX.Element | null {
               <div className="help-kbd-desc">{s.d}</div>
             </div>
           ))}
+
+          <div className="help-section-title" style={{ marginTop: 24 }}>About</div>
+          <div className="help-about">
+            <img src={logoUrl} alt="Storyboard Reference Studio" className="help-about-logo" />
+            <div>
+              <div className="help-about-name">Storyboard Reference Studio</div>
+              <div className="help-about-tag">
+                Turn any reference imagery into stills + image-generator prompts.
+              </div>
+              <Credits />
+            </div>
+          </div>
         </div>
       </div>
     </div>

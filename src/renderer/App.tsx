@@ -12,6 +12,7 @@ import { Board } from './panels/Board'
 import { Toasts } from './panels/Toasts'
 import { HelpOverlay } from './panels/Help'
 import { Present } from './panels/Present'
+import logoUrl from './assets/logo.png'
 
 function CreditLink({ url, children }: { url: string; children: string }): JSX.Element {
   return (
@@ -74,10 +75,11 @@ function Welcome(): JSX.Element {
 
   return (
     <div className="welcome">
-      <div className="wordmark">
-        STORYBOARD
-        <span className="sub">REFERENCE</span>
-      </div>
+      <img
+        src={logoUrl}
+        alt="Storyboard Reference Studio"
+        style={{ width: 280, height: 280, objectFit: 'contain', borderRadius: 16, marginBottom: -12 }}
+      />
       <p>
         Turn any reference imagery — movie clips, phone footage, pulled stills — into a storyboard of
         stills and image-generator-ready prompts.

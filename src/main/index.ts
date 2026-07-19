@@ -54,6 +54,13 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Native About panel (macOS "About Storyboard Reference Studio").
+  app.setAboutPanelOptions({
+    applicationName: 'Storyboard Reference Studio',
+    applicationVersion: app.getVersion(),
+    credits: 'Created by Sam Wasserman — wassermanproductions.com · wasserman.ai',
+    copyright: 'Apache-2.0 — keep this credit when using or forking.'
+  })
   createWindow()
   void startControlServer(() => mainWindow)
   app.on('activate', () => {

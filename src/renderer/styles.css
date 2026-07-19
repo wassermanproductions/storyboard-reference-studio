@@ -399,3 +399,10 @@ textarea { resize: vertical; min-height: 60px; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 2px solid var(--bg-panel); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* About block in the help overlay */
+.help-about { display: flex; gap: 14px; align-items: center; padding: 10px 0 4px; }
+.help-about-logo { width: 84px; height: 84px; object-fit: contain; border-radius: 12px; flex: none; }
+.help-about-name { font-weight: 700; font-size: 14px; letter-spacing: 0.02em; }
+.help-about-tag { color: var(--text-faint); font-size: 12px; margin: 3px 0 6px; }
+.help-about .credits { text-align: left; margin: 0; }
