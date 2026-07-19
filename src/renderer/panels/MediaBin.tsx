@@ -3,10 +3,17 @@
  * thumbnails, click to open in the viewer.
  */
 
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useStore, currentProjectJson } from '../store'
 import { useMediaUrl } from '../lib/useMediaUrl'
 import type { MediaItem } from '@shared/types'
+
+const AUDIO_EXTS = ['mp3', 'wav', 'm4a', 'aac']
+
+function isAudioPath(p: string): boolean {
+  const ext = p.toLowerCase().split('.').pop() ?? ''
+  return AUDIO_EXTS.includes(ext)
+}
 
 function BinItem({ item }: { item: MediaItem }): JSX.Element {
   const url = useMediaUrl(item)
@@ -36,24 +43,55 @@ export function MediaBin(): JSX.Element {
   const doc = useStore((s) => s.doc)
   const folder = useStore((s) => s.projectFolder)
   const addMedia = useStore((s) => s.addMedia)
+  const setAudioFile = useStore((s) => s.setAudioFile)
+  const audioFile = useStore((s) => s.doc?.settings.audioFile ?? null)
   const toast = useStore((s) => s.toast)
+
+  // Remember the scratch track so the bin row can toggle it on/off without
+  // losing the copied file (audioFile is the *active* animatic track).
+  const [scratch, setScratch] = useState<{ sourceFile: string; name: string } | null>(null)
+  useEffect(() => {
+    if (audioFile) {
+      setScratch((prev) =>
+        prev && prev.sourceFile === audioFile ? prev : { sourceFile: audioFile, name: audioFile.split(/[/\\]/).pop() ?? audioFile }
+      )
+    }
+  }, [audioFile])
 
   const onImport = useCallback(async () => {
     if (!folder) return
     const paths = await window.sbr.importMediaDialog()
     if (!paths.length) return
+    let audioCount = 0
+    let mediaCount = 0
     for (const p of paths) {
       try {
-        const imported = await window.sbr.importMedia(folder, p)
-        addMedia(imported)
+        if (isAudioPath(p)) {
+          const a = await window.sbr.importAudio(folder, p)
+          setScratch(a)
+          setAudioFile(a.sourceFile)
+          audioCount++
+        } else {
+          const imported = await window.sbr.importMedia(folder, p)
+          addMedia(imported)
+          mediaCount++
+        }
       } catch (e) {
         toast(`Import failed: ${(e as Error).message}`, 'error')
       }
     }
     const json = currentProjectJson()
     if (json) await window.sbr.saveProject(folder, json)
-    toast(`Imported ${paths.length} file${paths.length > 1 ? 's' : ''}.`, 'success')
-  }, [folder, addMedia, toast])
+    if (mediaCount) toast(`Imported ${mediaCount} file${mediaCount > 1 ? 's' : ''}.`, 'success')
+    if (audioCount) toast('Added scratch track.', 'success')
+  }, [folder, addMedia, setAudioFile, toast])
+
+  const toggleScratch = useCallback(() => {
+    if (!scratch) return
+    setAudioFile(audioFile === scratch.sourceFile ? null : scratch.sourceFile)
+    const json = currentProjectJson()
+    if (json && folder) void window.sbr.saveProject(folder, json)
+  }, [scratch, audioFile, setAudioFile, folder])
 
   const onPaste = useCallback(async () => {
     if (!folder) return
@@ -89,10 +127,24 @@ export function MediaBin(): JSX.Element {
       <div className="bin-list">
         {(doc?.media.length ?? 0) === 0 ? (
           <div className="hint" style={{ padding: 8 }}>
-            Import videos or images, or paste a screenshot, to start pulling reference frames.
+            Import videos, images, or an audio scratch track — or paste a screenshot — to start.
           </div>
         ) : (
           doc!.media.map((m) => <BinItem key={m.id} item={m} />)
+        )}
+        {scratch && (
+          <div
+            className={`bin-item scratch ${audioFile === scratch.sourceFile ? 'active' : ''}`}
+            onClick={toggleScratch}
+            title="Click to set / unset as the animatic scratch track"
+          >
+            <div className="bin-thumb scratch-thumb">♪</div>
+            <div className="bin-meta">
+              <div className="bin-name" title={scratch.name}>{scratch.name}</div>
+              <div className="bin-sub">{audioFile === scratch.sourceFile ? 'scratch track' : 'audio (off)'}</div>
+              <div className="bin-kind">AUDIO</div>
+            </div>
+          </div>
         )}
       </div>
     </div>

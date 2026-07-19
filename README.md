@@ -4,7 +4,7 @@
 
 **Turn any reference imagery into stills + image-generator prompts — recreate any framing in your generator of choice.**
 
-![Storyboard Reference Studio — a six-frame reference board with per-frame prompts](docs/images/hero.png)
+![Storyboard Reference Studio — a working reference board with shot metadata, camera-move annotations, and per-frame prompts](docs/images/hero.png)
 
 </div>
 
@@ -15,11 +15,12 @@ Image generators give you far better results when you show them exactly the fram
 It is deliberately **not** an editor. Pulling reference frames, reframing them, and writing precise per-generator prompts is the whole product. The whole app runs offline — the only thing that needs credentials is the one-click Claude-vision prompt (and there's a built-in offline template mode for that too).
 
 - 🎞️ **Auto-board scene detection** — point it at a section and it finds the cuts, pulling one frame per shot. Or every N seconds, or N evenly-spaced frames.
-- ✂️ **Aspect reframing** — drag a crop overlay to reframe any frame to 16:9, 9:16, 1:1, 4:3, or 2.39:1; the crop is applied full-res on export.
-- 🎯 **6 generator profiles** — each phrases the prompt the way its model likes it, including Midjourney's exact trailing `--ar` (from the frame's crop) and `--style raw`.
-- 🔌 **Offline mode** — no API key? A structured template builds a prompt scaffold from the frame's metadata + shot-size / angle / lighting / mood dropdowns.
-- 📦 **Deterministic exports** — one folder: per-frame `still.png` + `prompt.txt`, plus `prompts.json`, a labelled `contact-sheet.png`, and a readable `board.md`.
-- 🤖 **Agent-drivable** — a bundled MCP server lets Claude Code, Codex, or any MCP client build and prompt the board for you.
+- ✂️ **Reframe on the stage** — select a card to recompose it full-size with rule-of-thirds + action-safe guides and a live resolution readout; reframe to 16:9, 9:16, 1:1, 4:3, or 2.39:1, applied full-res on export.
+- ↗️ **Camera-move annotations** — draw arrows and action text over a frame; they render on the board, in Present mode, and composited onto every exported still.
+- 🎬 **Animatic + Present mode** — give each frame a hold time, play the board full-screen (with an optional audio scratch track), and export a **1920×1080 animatic MP4**.
+- 📄 **Every deliverable** — a board package, an **animatic MP4**, a **PDF storyboard** (cover + 2×3 grid), and a **shot-list CSV** (scene, shot, size, angle, lens, movement, transition, duration).
+- 🎯 **6 generator profiles** — each phrases the prompt the way its model likes it, including Midjourney's exact trailing `--ar` (from the frame's crop) and `--style raw`. No API key? An offline template builds a scaffold from the frame's metadata.
+- 🤖 **Agent-drivable** — a bundled MCP server lets Claude Code, Codex, or any MCP client build, prompt, annotate, and export the board for you.
 
 ---
 
@@ -28,8 +29,8 @@ It is deliberately **not** an editor. Pulling reference frames, reframing them, 
 1. **IMPORT** — drag in videos and images (or paste from the clipboard). They land in a media bin.
 2. **PICK** — for a video: scrub, set an in/out section with draggable handles, and bookmark individual frames — or one-click **Auto-board** the section (scene detect / every N seconds / N frames). Images import as frames directly.
 3. **BOARD** — picked frames become cards on a storyboard strip: reorder by drag, label (`SHOT 1A — HERO ENTERS`), add notes, and reframe each to a target aspect with a draggable crop overlay.
-4. **PROMPT** — one click generates a per-frame prompt via Claude vision — shot size & angle, lens feel, subjects & blocking, environment, lighting, color/mood, style keywords — phrased for your selected generator. Editable in place. Batch **Prompt all missing**. No key? Fill the offline template.
-5. **EXPORT** — **Export board** writes one folder and reveals it in Finder:
+4. **PROMPT & DIRECT** — one click generates a per-frame prompt via Claude vision — shot size & angle, lens feel, subjects & blocking, environment, lighting, color/mood, style keywords — phrased for your selected generator. Editable in place. Batch **Prompt all missing**. No key? Fill the offline template. Set each frame's shot metadata, hold time, and draw camera-move arrows.
+5. **PRESENT & EXPORT** — press **P** to play the board as an animatic, then pick a deliverable from **Export ▾**: a board package (below), an **animatic MP4**, a **PDF storyboard**, or a **shot-list CSV**. **Export board** writes one folder and reveals it in Finder:
 
 ```
 Storyboard/board-2026-07-07-…/
@@ -51,10 +52,12 @@ Storyboard/board-2026-07-07-…/
 
 |  |  |
 |---|---|
-| ![Viewer with an in/out range and the playhead on a moment](docs/images/viewer.png) | ![Reframe crop overlay on a frame](docs/images/crop.png) |
-| **Pick** — scrub a clip, pull an in/out range with draggable handles, and bookmark the exact frame. Frame-step with the arrow keys. | **Reframe** — pick a target aspect and drag the crop overlay to recompose. The crop is applied full-res on export, never to the source. |
-| ![Inspector with a filled per-frame prompt](docs/images/inspector.png) | ![The board exported to a folder](docs/images/export.png) |
-| **Prompt** — label, note, and prompt a frame for your target generator; edit the result in place, or build one offline from the template. | **Export** — one click writes the whole package to a folder and reveals it in Finder: stills, prompts, contact sheet, and a readable board. |
+| ![Viewer with an in/out range on a clip](docs/images/viewer.png) | ![The frame stage with a reframe crop, guides, and camera-move annotations](docs/images/stage.png) |
+| **Pick** — scrub a clip, pull an in/out range with draggable handles, and bookmark the exact frame. Frame-step with the arrow keys, or Auto-board the whole section by scene cut. | **Reframe & direct** — recompose a frame full-size with rule-of-thirds + action-safe guides, and draw camera-move arrows and action text. Overlays show on the board and composite onto every exported still. |
+| ![Inspector with shot metadata and a filled per-frame prompt](docs/images/inspector.png) | ![Present mode playing the board full-screen with a metadata strip](docs/images/present.png) |
+| **Prompt** — fill the shot list (scene, shot, size, angle, lens, movement, transition), set a hold time, and prompt the frame for your target generator; edit in place or build one offline from the template. | **Present** — play the board full-screen as an animatic with a shot-metadata strip and an optional audio scratch track. Space plays, arrows step, `M` toggles the strip. |
+| ![The Export menu open over the finished board](docs/images/export.png) |  |
+| **Export** — pick a deliverable from **Export ▾**: a board package, an animatic MP4, a PDF storyboard, or a shot-list CSV. Each writes to the project's `exports/` folder and reveals it in Finder. |  |
 
 ---
 
@@ -94,6 +97,25 @@ The whole app works with no network. The one online action — the **Generate pr
 ### Agent control
 
 A bundled **MCP server** lets an AI agent build and prompt the board — import-aware `get_state`, `auto_board`, `set_crop`, `describe_frame`, and `export_board` — the same moves you'd make by hand. See [Agent control](#agent-control-mcp) below.
+
+---
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `Space` | Play / pause the clip (or the animatic in Present) |
+| `← / →` | Step one frame back / forward |
+| `I` / `O` | Set the IN / OUT point of the section |
+| `B` | Bookmark the current frame |
+| `P` | Present / play the board |
+| `A` | Arrow annotation tool |
+| `T` | Text annotation tool |
+| `G` | Toggle rule-of-thirds + action-safe guides |
+| `M` | Toggle the shot strip in Present mode |
+| `⌘S` | Save the project |
+| `⌫` | Remove the selected annotation, or the selected card |
+| `?` | Toggle the in-app help |
 
 ---
 
@@ -146,6 +168,13 @@ Discovery and auth are automatic — the app writes a localhost-only port + bear
 | `describe_frame` | `frameId, profileId?, context?` | Generate a Claude prompt for the target generator. |
 | `extract_frame` | `frameId` | Ensure a full-res still PNG exists; return its path. |
 | `export_board` | — | Export the whole board package; return the folder. |
+| `set_frame_duration` | `frameId, durationS` | Set a frame's animatic hold time (0.25–30s). |
+| `set_shot_meta` | `frameId, sceneNo?/shotNo?/shotSize?/cameraAngle?/lens?/movement?/transition?/durationS?` | Set shot-list metadata (any subset). |
+| `add_annotation` | `frameId, kind, points, text?, color?` | Draw an arrow (tail→head) or text annotation. |
+| `clear_annotations` | `frameId` | Remove all annotations from a frame. |
+| `export_animatic` | `burnLabel?` | Export a 1920×1080 animatic MP4 (scratch track muxed if set). |
+| `export_pdf` | — | Export a PDF storyboard. |
+| `export_shotlist` | — | Export a shot-list CSV. |
 
 ---
 
@@ -157,6 +186,15 @@ Discovery and auth are automatic — the app writes a localhost-only port + bear
 | `npm run typecheck` / `npm run lint` | Strict TS + ESLint (zero warnings) |
 | `npm run smoke` | Build + full end-to-end: boots the app, runs real ffmpeg extraction (interval + scene), reframes, exports a real package, and verifies it with ffprobe |
 | `npm run package` | Build a macOS DMG (`release/`) |
+
+The README screenshots in `docs/images/` are generated, not hand-captured. After a build, run the docs spec:
+
+```bash
+npm run build
+README_SHOTS=1 npx playwright test tests/e2e/readme-shots.spec.ts
+```
+
+It stages a board through the app and writes the six 1600×1000 PNGs. Point it at real footage with `README_FOOTAGE_DIR=/path/to/clips` (it looks for `night-market-scene1.mov`, `street-patrol.mp4`, and `night-market-portrait.mp4`); with the variable unset it synthesizes a stand-in clip so the spec still runs. This spec is gated behind `README_SHOTS` and never runs in the normal `npm run smoke` suite.
 
 ## Project structure
 

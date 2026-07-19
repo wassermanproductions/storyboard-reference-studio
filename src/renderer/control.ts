@@ -6,8 +6,9 @@
  */
 
 import { useStore, currentProjectJson } from './store'
-import { ensureStill, generatePrompt, buildExportInputs } from './lib/frameOps'
+import { ensureStill, generatePrompt, buildExportInputs, audioAbsPath } from './lib/frameOps'
 import type { RangeMode } from '../preload/index'
+import type { ShotMeta } from '@shared/types'
 
 type Params = Record<string, unknown>
 type ControlResult = { ok: boolean; data?: unknown; error?: string }
@@ -39,9 +40,11 @@ function stateSummary(): unknown {
     })),
     frames: s.orderedFrames().map((f, i) => ({
       id: f.id, index: i + 1, mediaId: f.mediaId, timeS: f.timeS, label: f.label,
-      hasPrompt: !!f.prompt?.text, crop: f.crop?.aspect ?? null
+      hasPrompt: !!f.prompt?.text, crop: f.crop?.aspect ?? null,
+      durationS: f.durationS, shot: f.shot, annotations: f.annotations.length
     })),
-    defaultProfile: doc?.settings.defaultProfileId ?? null
+    defaultProfile: doc?.settings.defaultProfileId ?? null,
+    audioFile: doc?.settings.audioFile ?? null
   }
 }
 
@@ -147,6 +150,99 @@ async function execute(action: string, params: Params): Promise<unknown> {
       })
       if (!res.ok) throw new Error(res.error ?? 'export failed')
       return { packagePath: res.packagePath }
+    }
+
+    case 'set_frame_duration': {
+      requireDoc()
+      const frameId = str(params, 'frameId')
+      const durationS = num(params, 'durationS')
+      if (!frameId || durationS === undefined) throw new Error('frameId and durationS are required.')
+      s.setFrameDuration(frameId, durationS)
+      await saveNow()
+      return { ok: true }
+    }
+
+    case 'set_shot_meta': {
+      requireDoc()
+      const frameId = str(params, 'frameId')
+      if (!frameId) throw new Error('frameId is required.')
+      const patch: Partial<ShotMeta> = {}
+      for (const k of ['sceneNo', 'shotNo', 'shotSize', 'cameraAngle', 'lens', 'movement', 'transition'] as const) {
+        const v = str(params, k)
+        if (v !== undefined) patch[k] = v
+      }
+      if (Object.keys(patch).length > 0) s.setFrameShot(frameId, patch)
+      const durationS = num(params, 'durationS')
+      if (durationS !== undefined) s.setFrameDuration(frameId, durationS)
+      await saveNow()
+      return { ok: true }
+    }
+
+    case 'add_annotation': {
+      requireDoc()
+      const frameId = str(params, 'frameId')
+      const kind = str(params, 'kind')
+      if (!frameId || (kind !== 'arrow' && kind !== 'text')) {
+        throw new Error('frameId and kind ("arrow" or "text") are required.')
+      }
+      const rawPoints = params.points
+      const points = Array.isArray(rawPoints)
+        ? rawPoints
+            .map((p) => {
+              const pp = p as Record<string, unknown>
+              return { x: Number(pp?.x) || 0, y: Number(pp?.y) || 0 }
+            })
+        : []
+      if (points.length === 0) throw new Error('points is required (normalized 0..1 coords).')
+      const color = str(params, 'color') ?? '#ff5533'
+      const text = str(params, 'text')
+      const created = s.addAnnotation(frameId, { kind, points, color, text })
+      await saveNow()
+      return { annotationId: created.id }
+    }
+
+    case 'clear_annotations': {
+      requireDoc()
+      const frameId = str(params, 'frameId')
+      if (!frameId) throw new Error('frameId is required.')
+      s.clearAnnotations(frameId)
+      await saveNow()
+      return { ok: true }
+    }
+
+    case 'export_animatic': {
+      requireDoc()
+      if (!s.projectFolder) throw new Error('no project folder')
+      for (const f of s.orderedFrames()) await ensureStill(f.id)
+      const inputs = await buildExportInputs()
+      const exportsRoot = `${s.projectFolder}${s.projectFolder.includes('\\') ? '\\' : '/'}exports`
+      const res = await window.sbr.exportAnimatic(
+        { projectName: s.doc?.name ?? 'Storyboard', exportsRoot, frames: inputs },
+        { burnLabel: params.burnLabel === true, audioPath: audioAbsPath() }
+      )
+      if (!res.ok) throw new Error(res.error ?? 'animatic export failed')
+      return { videoPath: res.videoPath }
+    }
+
+    case 'export_pdf': {
+      requireDoc()
+      if (!s.projectFolder) throw new Error('no project folder')
+      for (const f of s.orderedFrames()) await ensureStill(f.id)
+      const inputs = await buildExportInputs()
+      const exportsRoot = `${s.projectFolder}${s.projectFolder.includes('\\') ? '\\' : '/'}exports`
+      const res = await window.sbr.exportPdf({ projectName: s.doc?.name ?? 'Storyboard', exportsRoot, frames: inputs })
+      if (!res.ok) throw new Error(res.error ?? 'pdf export failed')
+      return { pdfPath: res.pdfPath }
+    }
+
+    case 'export_shotlist': {
+      requireDoc()
+      if (!s.projectFolder) throw new Error('no project folder')
+      const inputs = await buildExportInputs()
+      const exportsRoot = `${s.projectFolder}${s.projectFolder.includes('\\') ? '\\' : '/'}exports`
+      const res = await window.sbr.exportShotlist({ projectName: s.doc?.name ?? 'Storyboard', exportsRoot, frames: inputs })
+      if (!res.ok) throw new Error(res.error ?? 'shot list export failed')
+      return { csvPath: res.csvPath }
     }
 
     default:

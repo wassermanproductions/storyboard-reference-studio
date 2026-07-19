@@ -119,6 +119,93 @@ const TOOLS = [
     description:
       'Export the whole board to a folder: per-frame still.png + prompt.txt, plus prompts.json, contact-sheet.png, and board.md. Returns the package path.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+  },
+  {
+    name: 'set_frame_duration',
+    description: 'Set a board frame’s animatic hold time in seconds (0.25–30).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        frameId: { type: 'string', description: 'A frame id from get_state.' },
+        durationS: { type: 'number', description: 'Hold time in seconds (0.25–30).' }
+      },
+      required: ['frameId', 'durationS'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'set_shot_meta',
+    description:
+      'Set shot-list metadata on a frame. Any subset of fields may be supplied; omitted fields are left unchanged. durationS also sets the animatic hold time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        frameId: { type: 'string', description: 'A frame id from get_state.' },
+        sceneNo: { type: 'string', description: 'Scene number/label.' },
+        shotNo: { type: 'string', description: 'Shot number/label.' },
+        shotSize: { type: 'string', description: 'e.g. "medium close-up".' },
+        cameraAngle: { type: 'string', description: 'e.g. "low angle".' },
+        lens: { type: 'string', description: 'e.g. "35mm".' },
+        movement: { type: 'string', description: 'e.g. "Dolly in".' },
+        transition: { type: 'string', description: 'e.g. "Cut".' },
+        durationS: { type: 'number', description: 'Hold time in seconds (0.25–30).' }
+      },
+      required: ['frameId'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'add_annotation',
+    description:
+      'Add a camera-move / action annotation to a frame. kind "arrow" uses points[0]=tail, points[1]=head; kind "text" uses points[0]=anchor with a text string. Coordinates are normalized 0..1 in source space.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        frameId: { type: 'string', description: 'A frame id from get_state.' },
+        kind: { type: 'string', enum: ['arrow', 'text'], description: 'Annotation kind.' },
+        points: {
+          type: 'array',
+          description: 'Normalized points {x,y} in 0..1 source space.',
+          items: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] }
+        },
+        text: { type: 'string', description: 'Text (for kind "text").' },
+        color: { type: 'string', description: 'Hex color, e.g. "#ff5533".' }
+      },
+      required: ['frameId', 'kind', 'points'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'clear_annotations',
+    description: 'Remove all annotations from a frame.',
+    inputSchema: {
+      type: 'object',
+      properties: { frameId: { type: 'string', description: 'A frame id from get_state.' } },
+      required: ['frameId'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'export_animatic',
+    description:
+      'Export an animatic MP4: each frame held for its duration, 1920×1080, 24fps, crop + annotations applied, scratch track muxed if set. Returns the video path.',
+    inputSchema: {
+      type: 'object',
+      properties: { burnLabel: { type: 'boolean', description: 'Burn each frame’s label into the picture.' } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'export_pdf',
+    description:
+      'Export a PDF storyboard (A4 landscape): cover page + 2×3 cells per page with stills (crop + annotations), labels, shot metadata, and notes. Returns the PDF path.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+  },
+  {
+    name: 'export_shotlist',
+    description:
+      'Export the board as a shot-list CSV (scene, shot, size, angle, lens, movement, transition, duration, time, notes, prompt). Returns the CSV path.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }
   }
 ]
 

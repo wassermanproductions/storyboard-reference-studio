@@ -7,15 +7,26 @@
  *
  *   README_SHOTS=1 npx playwright test tests/e2e/readme-shots.spec.ts
  *
+ * Set README_FOOTAGE_DIR to a folder of real clips and the board is staged from
+ * them instead of the synthesized gradient fallback:
+ *
+ *   README_SHOTS=1 \
+ *   README_FOOTAGE_DIR=/path/to/footage \
+ *   npx playwright test tests/e2e/readme-shots.spec.ts
+ *
+ * Expected footage filenames (any missing one falls back to the primary clip):
+ *   night-market-scene1.mov   — primary reference clip (many distinct shots)
+ *   street-patrol.mp4         — tracking clip
+ *   night-market-portrait.mp4 — portrait clip
+ *
  * Each scene is staged through the documented automation surface
  * (window.__sbr.store + window.sbr IPC) — the same store actions the UI and
- * agents use. A rich six-scene reference clip is synthesized with ffmpeg
- * (distinct lit gradient "shots", each with a standing subject silhouette) so
- * the board reads like real pulled reference imagery, not test patterns.
+ * agents use. Without README_FOOTAGE_DIR a six-shot reference clip is
+ * synthesized with ffmpeg so the file still runs standalone.
  */
 
 import { _electron as electron, test, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, mkdirSync, statSync } from 'fs'
+import { mkdtempSync, mkdirSync, statSync, existsSync } from 'fs'
 import { execFileSync } from 'child_process'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -29,18 +40,23 @@ declare global {
 
 const OUT = 'docs/images'
 const GATE = !process.env.README_SHOTS
+const FOOTAGE_DIR = process.env.README_FOOTAGE_DIR ?? ''
 
 let app: ElectronApplication
 let page: Page
 let smokeDir: string
-let clipPath: string
+
+/** Resolved media ids by role, plus the board frame ids in order. */
+let primaryId = ''
+const clipIds: Record<string, string> = {}
+let frameIds: string[] = []
 
 /**
  * Six distinct, cinematic-looking gradient "shots" (golden hour, blue night,
  * sepia, teal/magenta dusk, grey interior, cool exterior), each with a dark
  * standing-figure box so they read as framed reference stills with a subject.
  * Hard cuts every 1s so scene-detect finds them. All via ffmpeg lavfi — no
- * external assets.
+ * external assets. Only used when README_FOOTAGE_DIR is unset.
  */
 function makeReferenceClip(dir: string): string {
   const out = join(dir, 'reference.mp4')
@@ -65,43 +81,176 @@ function makeReferenceClip(dir: string): string {
   return out
 }
 
-/** Import the clip and add it to the media bin; returns the media id. */
-async function importClip(): Promise<string> {
-  return page.evaluate(async (clip) => {
+/** Absolute source path for a clip role, or '' if that clip isn't available. */
+function clipSource(file: string): string {
+  if (!FOOTAGE_DIR) return ''
+  const p = join(FOOTAGE_DIR, file)
+  return existsSync(p) ? p : ''
+}
+
+/** Import one source file into the project; returns the media summary. */
+async function importFile(source: string): Promise<{ id: string; durationS: number }> {
+  return page.evaluate(async (src) => {
     const s = window.__sbr.store.getState()
-    const imported = await window.sbr.importMedia(s.projectFolder, clip)
+    const imported = await window.sbr.importMedia(s.projectFolder, src)
     const m = s.addMedia(imported)
-    return m.id as string
-  }, clipPath)
+    return { id: m.id as string, durationS: (imported.durationS ?? 0) as number }
+  }, source)
 }
 
 /**
- * Auto-board the whole clip in count mode (guaranteed N frames), extract a
- * full-res still for each, and store it — the same path Auto-board uses. Labels
- * read like a real shot list. Returns the created frame ids in board order.
+ * A working night-market session. Each card names a clip role, a real source
+ * time, shot-list metadata, a hold time, an optional reframe crop, an optional
+ * prompt (written in the target generator's phrasing), and optional camera-move
+ * annotations. Two inserts are deliberately left un-prompted so the board reads
+ * as a real in-progress session (prompted / missing split).
  */
-async function autoBoard(mediaId: string, labels: string[]): Promise<string[]> {
-  return page.evaluate(
-    async ({ mediaId, labels }) => {
-      const s = window.__sbr.store.getState()
-      const media = s.media(mediaId)
-      const abs = s.mediaAbsPath(mediaId)
-      const outDir = `${s.projectFolder}/.frames`
-      await window.sbr.ensureDir(outDir)
-      // Stay just inside the clip end — seeking to the exact last timestamp can
-      // return no frame, which would drop a card and leave a missing still.
-      const end = Math.max(0.5, (media.durationS ?? 6) - 0.2)
-      const res = await window.sbr.extractRange(abs, 0, end, { kind: 'count', n: labels.length }, outDir)
-      const ids: string[] = []
-      res.frames.forEach((f: any, i: number) => {
-        const frame = s.addFrame(mediaId, f.time, labels[i] ?? `SHOT ${i + 1}`)
-        s.setStill(frame.id, { path: f.path, width: media.width, height: media.height })
-        ids.push(frame.id)
-      })
-      return ids
+interface Anno { kind: 'arrow' | 'text'; points: { x: number; y: number }[]; text?: string; color: string }
+interface Card {
+  clip: 'primary' | 'patrol' | 'portrait'
+  timeS: number
+  label: string
+  shot: Record<string, string>
+  durationS: number
+  crop?: { aspect: string; x: number; y: number; w: number; h: number }
+  prompt?: { text: string; profileId: string }
+  annotations?: Anno[]
+}
+
+const CARDS: Card[] = [
+  {
+    clip: 'primary',
+    timeS: 2.0,
+    label: '1A — DRONE ESTABLISH, NIGHT MARKET',
+    shot: { sceneNo: '1', shotNo: '1A', shotSize: 'extreme wide shot', cameraAngle: 'overhead / top-down', lens: '24mm', movement: 'Crane down', transition: 'Fade in' },
+    durationS: 4,
+    crop: { aspect: '2.39:1', x: 0.03, y: 0.15, w: 0.94, h: 0.699 },
+    prompt: {
+      profileId: 'flux',
+      text: 'Aerial wide shot craning down over a crowded night market, rows of red paper lanterns and neon shop signs receding into haze, food stalls steaming below, a river of people moving between them. Lit by warm practicals against a cool night sky. Anamorphic, cinematic photograph, fine film grain.'
+    }
+  },
+  {
+    clip: 'primary',
+    timeS: 4.4,
+    label: '1C — GANG WALK-UP',
+    shot: { sceneNo: '1', shotNo: '1C', shotSize: 'medium shot', cameraAngle: 'eye level', lens: '35mm', movement: 'Dolly in', transition: 'Cut' },
+    durationS: 3,
+    prompt: {
+      profileId: 'midjourney',
+      text: 'young man in a leather jacket walking straight toward camera, gang flanking behind him, crowded night market, red lantern light, wet asphalt reflections, shallow depth of field, 35mm, medium shot, tense mood, cinematic still, film grain --ar 2.39:1 --style raw'
     },
-    { mediaId, labels }
-  )
+    annotations: [
+      { kind: 'arrow', points: [{ x: 0.16, y: 0.86 }, { x: 0.42, y: 0.58 }], color: '#ffd400' },
+      { kind: 'arrow', points: [{ x: 0.86, y: 0.86 }, { x: 0.60, y: 0.58 }], color: '#ffd400' },
+      { kind: 'text', points: [{ x: 0.40, y: 0.93 }], text: 'push in', color: '#ffd400' },
+      { kind: 'arrow', points: [{ x: 0.06, y: 0.34 }, { x: 0.24, y: 0.40 }], color: '#ff5533' },
+      { kind: 'text', points: [{ x: 0.05, y: 0.24 }], text: 'gang enters L', color: '#ff5533' }
+    ]
+  },
+  {
+    clip: 'primary',
+    timeS: 8.2,
+    label: '2B — WOK FIRE, INSERT',
+    shot: { sceneNo: '2', shotNo: '2B', shotSize: 'extreme close-up', cameraAngle: 'eye level', lens: '50mm macro', movement: 'Static', transition: 'Cut' },
+    durationS: 1.5
+    // left un-prompted: an insert still on the to-do list
+  },
+  {
+    clip: 'primary',
+    timeS: 16.5,
+    label: '3A — VENDOR, THE WARNING',
+    shot: { sceneNo: '3', shotNo: '3A', shotSize: 'medium shot', cameraAngle: 'eye level', lens: '50mm', movement: 'Static', transition: 'Cut' },
+    durationS: 2.5,
+    crop: { aspect: '4:3', x: 0.147, y: 0.03, w: 0.705, h: 0.94 },
+    prompt: {
+      profileId: 'midjourney',
+      text: 'older female market vendor at her stall, weathered face lit by warm lantern glow, watching something off-camera with concern, night-market bustle blurred behind, 50mm, medium shot, warm practical light, melancholy mood, cinematic still, film grain --ar 4:3 --style raw'
+    }
+  },
+  {
+    clip: 'portrait',
+    timeS: 6.5,
+    label: '3D — LOOKOUT, FLAT CAP',
+    shot: { sceneNo: '3', shotNo: '3D', shotSize: 'close-up', cameraAngle: 'eye level', lens: '85mm', movement: 'Pan L→R', transition: 'Match cut' },
+    durationS: 2,
+    prompt: {
+      profileId: 'midjourney',
+      text: 'close-up of a young lookout in a flat cap, half his face in warm lantern light, eyes tracking left, out-of-focus market neon behind, 85mm, shallow depth of field, tense mood, cinematic still, film grain --ar 16:9 --style raw'
+    }
+  },
+  {
+    clip: 'patrol',
+    timeS: 2.0,
+    label: '4B — STREET PATROL, TRACKING',
+    shot: { sceneNo: '4', shotNo: '4B', shotSize: 'wide shot', cameraAngle: 'eye level', lens: '35mm', movement: 'Track L', transition: 'Cut' },
+    durationS: 4,
+    prompt: {
+      profileId: 'flux',
+      text: 'Tracking wide shot moving with a line of young men walking abreast through the night market, jackets and gold chains, stalls and hanging lights streaking past on either side, wet ground catching red and green neon. Handheld energy, 35mm, cinematic photograph.'
+    }
+  },
+  {
+    clip: 'primary',
+    timeS: 36.3,
+    label: '5A — THE BLADE, INSERT',
+    shot: { sceneNo: '5', shotNo: '5A', shotSize: 'extreme close-up', cameraAngle: 'low angle', lens: '50mm', movement: 'Push-in', transition: 'Smash cut' },
+    durationS: 1.25
+    // left un-prompted: an insert still on the to-do list
+  },
+  {
+    clip: 'primary',
+    timeS: 22.2,
+    label: '6C — HERO, FINAL STARE',
+    shot: { sceneNo: '6', shotNo: '6C', shotSize: 'medium close-up', cameraAngle: 'eye level', lens: '85mm', movement: 'Static', transition: 'Fade out' },
+    durationS: 3.5,
+    crop: { aspect: '9:16', x: 0.348, y: 0.02, w: 0.304, h: 0.96 },
+    prompt: {
+      profileId: 'midjourney',
+      text: 'medium close-up of the hero staring down camera, jaw set, red and amber market light raking across his face, deep shadow behind, 85mm, shallow depth of field, ominous mood, cinematic still, film grain --ar 9:16 --style raw'
+    }
+  }
+]
+
+/**
+ * Import the clips, then extract a full-res still for each card at its source
+ * time and create the board frame with all its metadata — the same store
+ * actions Auto-board + the Inspector use. Returns the frame ids in board order.
+ */
+async function stageBoard(): Promise<string[]> {
+  // Resolve which clip id backs each card. Extra clips fall back to the primary
+  // clip (and a spread of times) when their footage isn't present.
+  const fallbackTimes = CARDS.map((_, i) => Math.min(5.6, 0.5 + i * 0.7))
+  const resolved = CARDS.map((c, i) => {
+    const id = clipIds[c.clip] ?? primaryId
+    const usingPrimaryFallback = id === primaryId && c.clip !== 'primary'
+    const timeS = clipIds[c.clip] ? c.timeS : usingPrimaryFallback ? fallbackTimes[i]! : c.timeS
+    // When falling back to the synth clip (short), clamp all times into range.
+    return { ...c, mediaId: id, timeS: FOOTAGE_DIR ? timeS : fallbackTimes[i]! }
+  })
+
+  return page.evaluate(async (cards) => {
+    const s = window.__sbr.store.getState()
+    const sep = s.projectFolder.includes('\\') ? '\\' : '/'
+    const outDir = `${s.projectFolder}${sep}.frames`
+    await window.sbr.ensureDir(outDir)
+    const ids: string[] = []
+    for (const c of cards) {
+      const media = s.media(c.mediaId)
+      const abs = s.mediaAbsPath(c.mediaId)
+      const frame = s.addFrame(c.mediaId, c.timeS, c.label)
+      const outPng = `${outDir}${sep}${frame.id}.png`
+      const r = await window.sbr.extractFrame(abs, c.timeS, outPng)
+      if (r.ok) s.setStill(frame.id, { path: r.path ?? outPng, width: media.width, height: media.height })
+      s.setFrameShot(frame.id, c.shot)
+      s.setFrameDuration(frame.id, c.durationS)
+      if (c.crop) s.setFrameCrop(frame.id, c.crop)
+      if (c.prompt) s.setFramePrompt(frame.id, c.prompt.text, c.prompt.profileId, 'template')
+      if (c.annotations) for (const a of c.annotations) s.addAnnotation(frame.id, a)
+      ids.push(frame.id)
+    }
+    return ids
+  }, resolved)
 }
 
 /** Clear any lingering toasts so they don't clutter a capture. */
@@ -113,23 +262,13 @@ async function clearToasts(): Promise<void> {
   await page.waitForTimeout(150)
 }
 
-const SHOT_LABELS = [
-  'SHOT 1A — INT. LOFT, GOLDEN HOUR',
-  'SHOT 2 — EXT. STREET, NIGHT',
-  'SHOT 3B — HALLWAY, TUNGSTEN',
-  'SHOT 4 — ROOFTOP, DUSK NEON',
-  'SHOT 5 — WIDE, OVERCAST',
-  'SHOT 6C — FINAL, COOL EXTERIOR'
-]
-
 test.beforeAll(async () => {
   test.skip(GATE, 'docs generator — set README_SHOTS=1 to run')
   mkdirSync(OUT, { recursive: true })
   smokeDir = mkdtempSync(join(tmpdir(), 'sbr-readme-'))
-  clipPath = makeReferenceClip(smokeDir)
   app = await electron.launch({
     args: ['out/main/index.js'],
-    // Offline: the inspector shot uses the built-in template mode, no API key.
+    // Offline: prompts are staged as offline-template text, no API key needed.
     env: { ...process.env, SBR_SMOKE_DIR: smokeDir, ANTHROPIC_API_KEY: '' }
   })
   page = await app.firstWindow()
@@ -150,66 +289,44 @@ function verify(name: string): void {
   if (size < 100_000) throw new Error(`${name} is only ${size} bytes — capture looks empty`)
 }
 
-test('hero — a full board of six labelled reference frames with prompt indicators', async () => {
+test('hero — a working night-market board with a cinematic frame on the stage', async () => {
   test.skip(GATE, 'docs generator')
-  test.setTimeout(180_000)
-  const mediaId = await importClip()
-  const frameIds = await autoBoard(mediaId, SHOT_LABELS)
+  test.setTimeout(300_000)
 
-  // Fill prompts on most frames via the offline template so the board shows
-  // "has prompt" dots and a realistic prompted/missing split. Give a couple of
-  // frames crops too (aspect chips will read in the export/inspector shots).
-  await page.evaluate(
-    ({ frameIds }) => {
-      const s = window.__sbr.store.getState()
-      const tpls = [
-        'wide shot, hero silhouetted in a loft, golden hour rim light, warm amber and shadow, cinematic still, film grain --ar 16:9 --style raw',
-        'medium shot, lone figure on a rain-slick street, deep blue night exterior, cool practical glow, cinematic still, film grain --ar 16:9 --style raw',
-        'medium close-up, figure in a tungsten hallway, warm sepia falloff, tense mood, cinematic still, film grain --ar 4:3 --style raw',
-        'full shot, figure at a rooftop railing, dusk with magenta and teal neon, dreamy mood, cinematic still, film grain --ar 2.39:1 --style raw',
-        'extreme wide shot, small figure in an overcast landscape, soft grey daylight, melancholy mood, cinematic still --ar 16:9 --style raw'
-      ]
-      frameIds.forEach((id: string, i: number) => {
-        if (i < tpls.length) s.setFramePrompt(id, tpls[i], 'midjourney', 'template')
-      })
-      // Reframe a couple so their crop aspect is set on the doc.
-      s.setFrameCropAspect(frameIds[3], '2.39:1')
-      s.setFrameCropAspect(frameIds[2], '4:3')
-      // Keep the clip open in the viewer (so the center shows a lit reference
-      // frame, not an empty stage) AND select the golden-hour hero frame so the
-      // inspector shows it filled in.
-      s.selectFrame(frameIds[0])
-      s.selectMedia(s.doc.media[0].id)
-    },
-    { frameIds }
-  )
-  // Land the viewer playhead on the lit golden-hour subject.
-  await page.evaluate(() => {
-    const v = document.querySelector('video') as HTMLVideoElement | null
-    if (v) v.currentTime = 0.5
-  })
-  await page.waitForTimeout(900)
+  // Import the clips (primary always; patrol + portrait when footage is present).
+  const primary = await importFile(FOOTAGE_DIR ? clipSource('night-market-scene1.mov') || makeReferenceClip(smokeDir) : makeReferenceClip(smokeDir))
+  primaryId = primary.id
+  const patrolSrc = clipSource('street-patrol.mp4')
+  const portraitSrc = clipSource('night-market-portrait.mp4')
+  if (patrolSrc) clipIds.patrol = (await importFile(patrolSrc)).id
+  if (portraitSrc) clipIds.portrait = (await importFile(portraitSrc)).id
+
+  frameIds = await stageBoard()
+
+  // Open the signature "gang walk-up" frame on the center stage (with its
+  // camera-move annotations), keep the primary clip in the bin.
+  await page.evaluate((id) => {
+    const s = window.__sbr.store.getState()
+    s.selectMedia(s.doc.media[0].id)
+    s.selectFrame(id)
+  }, frameIds[1])
+  await page.waitForTimeout(1400)
   await clearToasts()
   await page.screenshot({ path: `${OUT}/hero.png` })
   verify('hero.png')
 })
 
-test('viewer — a clip with an in/out range and a bookmarked moment', async () => {
+test('viewer — the reference clip with an in/out range', async () => {
   test.skip(GATE, 'docs generator')
   test.setTimeout(120_000)
-  // Open the clip in the viewer, seek into the golden-hour scene, and set an
-  // in/out range around the money shot.
-  await page.evaluate((mediaId) => {
+  await page.evaluate(() => {
     const s = window.__sbr.store.getState()
-    // Clip in the viewer; also select the hero card so the inspector reads as
-    // filled rather than an empty prompt panel.
-    s.selectFrame(s.orderedFrames()[0].id)
-    s.selectMedia(mediaId)
-  }, await page.evaluate(() => window.__sbr.store.getState().doc.media[0].id))
+    s.selectFrame(null)
+    s.selectMedia(s.doc.media[0].id)
+  })
   await page.waitForTimeout(600)
 
-  // Make sure the video is decoded enough to seek accurately: kick playback
-  // briefly then pause, and wait until it reports a usable readyState.
+  // Decode enough of the video to render a real frame under the transport.
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => {
@@ -222,29 +339,29 @@ test('viewer — a clip with an in/out range and a bookmarked moment', async () 
           }
         }
         v.muted = true
-        void v.play().then(() => setTimeout(ready, 200)).catch(() => resolve())
+        void v.play().then(() => setTimeout(ready, 300)).catch(() => resolve())
       })
   )
+  await page.evaluate(() => {
+    const v = document.querySelector('video') as HTMLVideoElement | null
+    if (v) v.currentTime = 4.4
+  })
+  await page.waitForTimeout(500)
 
-  // Set an IN/OUT range by dragging the scrubber handles. The handle drag is
-  // pure pixel geometry (independent of the video's decode state, which doesn't
-  // seek reliably headless), so this produces a real, visible in/out band.
+  // Drag the IN/OUT handles to set a visible range around the shot.
   const scrub = page.locator('.scrub')
   const box = await scrub.boundingBox()
   if (box) {
     const y = box.y + box.height / 2
-    // Drag IN handle (starts at left edge) in to ~22%.
     await page.mouse.move(box.x + 2, y)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width * 0.22, y, { steps: 8 })
+    await page.mouse.move(box.x + box.width * 0.18, y, { steps: 8 })
     await page.mouse.up()
-    // Drag OUT handle (starts at right edge) in to ~80%.
     await page.mouse.move(box.x + box.width - 2, y)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width * 0.8, y, { steps: 8 })
+    await page.mouse.move(box.x + box.width * 0.74, y, { steps: 8 })
     await page.mouse.up()
-    // Move the playhead into the range by clicking the scrub track at ~48%.
-    await page.mouse.click(box.x + box.width * 0.48, y)
+    await page.mouse.click(box.x + box.width * 0.42, y)
   }
   await page.waitForTimeout(400)
   await clearToasts()
@@ -252,72 +369,88 @@ test('viewer — a clip with an in/out range and a bookmarked moment', async () 
   verify('viewer.png')
 })
 
-test('crop — the reframe overlay on a frame, mid-adjust', async () => {
+test('stage — the frame stage with a reframe crop, guides, and annotations', async () => {
   test.skip(GATE, 'docs generator')
   test.setTimeout(120_000)
-  // Select a frame, give it a punchy 1:1 crop offset from center so the overlay
-  // + corner handles read clearly over the still (the reframe editor in use).
-  await page.evaluate(() => {
-    const s = window.__sbr.store.getState()
-    const frame = s.orderedFrames()[2] // sepia hallway — subject to one side
-    // Keep the clip in the viewer so the center reads; reframe in the inspector.
-    s.selectMedia(s.doc.media[0].id)
-    s.selectFrame(frame.id)
-    // A punchy 1:1 crop pulled toward the subject, clearly offset from full
-    // frame so the overlay rect + corner handles read as an active reframe.
-    s.setFrameCrop(frame.id, { aspect: '1:1', x: 0.30, y: 0.10, w: 0.48, h: 0.72 })
+  // The gang walk-up frame: add a scope reframe + turn guides on so the crop
+  // overlay, rule-of-thirds / action-safe guides, and the camera-move
+  // annotations all read together on the big stage.
+  const crop = { aspect: '2.39:1', x: 0.17, y: 0.30, w: 0.64, h: 0.476 }
+  await page.evaluate(
+    ({ id, crop }) => {
+      const s = window.__sbr.store.getState()
+      s.selectMedia(s.doc.media[0].id)
+      s.selectFrame(id)
+      // A punchy scope reframe pulled onto the hero, clearly inset from the full
+      // frame so the crop rectangle + corner handles + guides read on the stage.
+      s.setFrameCrop(id, crop)
+      s.setGuidesOn(true)
+    },
+    { id: frameIds[1], crop }
+  )
+  // The crop overlay measures its container on mount; nudge it once more after
+  // the stage has laid out so the rect + guides render at the right size.
+  await page.waitForTimeout(500)
+  await page.evaluate(({ id, crop }) => window.__sbr.store.getState().setFrameCrop(id, crop), {
+    id: frameIds[1],
+    crop
   })
-  await page.evaluate(() => {
-    const v = document.querySelector('video') as HTMLVideoElement | null
-    if (v) v.currentTime = 2.5
-  })
-  // Give the still blob URL time to resolve so the crop editor mounts over it.
-  await page.waitForTimeout(1100)
+  await page.waitForTimeout(700)
   await clearToasts()
-  await page.screenshot({ path: `${OUT}/crop.png` })
-  verify('crop.png')
+  await page.screenshot({ path: `${OUT}/stage.png` })
+  verify('stage.png')
 })
 
-test('inspector — a frame with a filled offline-template prompt', async () => {
+test('inspector — a frame with filled shot metadata, duration, and a prompt', async () => {
   test.skip(GATE, 'docs generator')
   test.setTimeout(120_000)
-  await page.evaluate(() => {
+  // The vendor frame: a full shot row (scene/shot/size/angle/lens/movement/
+  // transition), a hold time, a 4:3 reframe, and a strong Midjourney prompt.
+  await page.evaluate((id) => {
     const s = window.__sbr.store.getState()
-    const frame = s.orderedFrames()[0] // golden-hour hero
+    s.setGuidesOn(false)
     s.selectMedia(s.doc.media[0].id)
-    s.selectFrame(frame.id)
-    s.setFrameLabel(frame.id, 'SHOT 1A — HERO ENTERS')
-    s.setFrameNotes(frame.id, 'Hero steps into the loft; low sun rakes across the floor.')
-    s.setFrameCropAspect(frame.id, '16:9')
-    s.setFramePrompt(
-      frame.id,
-      'wide shot, hero enters a sunlit loft, golden hour rim light, long warm shadows, dust in the air, amber and deep shadow, anamorphic feel, cinematic still, film grain, detailed --ar 16:9 --style raw',
-      'midjourney',
-      'template'
-    )
+    s.selectFrame(id)
+  }, frameIds[3])
+  await page.waitForTimeout(1100)
+  // The Inspector is taller than the viewport; scroll it so the shot fields and
+  // the filled Midjourney prompt are both in frame.
+  await page.evaluate(() => {
+    const el = document.querySelector('.inspector-col') as HTMLElement | null
+    if (el) el.scrollTop = el.scrollHeight
   })
-  await page.waitForTimeout(1000)
-  // Open the offline template controls so the shot shows the template UI filled.
-  await page.getByRole('button', { name: 'Offline template' }).click().catch(() => {})
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(300)
   await clearToasts()
   await page.screenshot({ path: `${OUT}/inspector.png` })
   verify('inspector.png')
 })
 
-test('export — a real exported board package', async () => {
+test('present — Present mode playing the board fullscreen with a metadata strip', async () => {
+  test.skip(GATE, 'docs generator')
+  test.setTimeout(120_000)
+  await clearToasts()
+  await page.evaluate(() => {
+    const s = window.__sbr.store.getState()
+    s.setPresentOpen(true)
+  })
+  // Present resets to the first frame and holds it (4s) — capture inside the hold.
+  await page.waitForTimeout(1300)
+  await page.screenshot({ path: `${OUT}/present.png` })
+  verify('present.png')
+  await page.evaluate(() => window.__sbr.store.getState().setPresentOpen(false))
+  await page.waitForTimeout(300)
+})
+
+test('export — the Export menu open over the finished board', async () => {
   test.skip(GATE, 'docs generator')
   test.setTimeout(180_000)
-  // Run a real export of the whole board, then show the export result: capture
-  // the app right after export (toast + full board) so the shot reads as the
-  // deliverable moment.
+  // Run a real board export so the deliverables are proven, then open the
+  // Export ▾ menu over the full board for the capture.
   await page.evaluate(async () => {
     const s = window.__sbr.store.getState()
     const frames = s.orderedFrames()
     const inputs: any[] = []
     for (const f of frames) {
-      // Reuse the still already extracted by Auto-board (stored in the cache);
-      // that's exactly what buildExportInputs does behind the Export button.
       const still = s.stills[f.id]?.path
       if (!still) continue
       const media = s.media(f.mediaId)
@@ -331,20 +464,20 @@ test('export — a real exported board package', async () => {
         sourceWidth: media.width,
         sourceHeight: media.height,
         timeS: f.timeS,
-        mediaName: media.name
+        mediaName: media.name,
+        durationS: f.durationS,
+        shot: f.shot,
+        annotations: f.annotations
       })
     }
-    const exportsRoot = `${s.projectFolder}/exports`
-    await window.sbr.exportBoard({ projectName: s.doc.name, exportsRoot, frames: inputs })
-    s.selectFrame(s.orderedFrames()[0].id)
+    const sep = s.projectFolder.includes('\\') ? '\\' : '/'
+    await window.sbr.exportBoard({ projectName: s.doc.name, exportsRoot: `${s.projectFolder}${sep}exports`, frames: inputs })
+    s.selectFrame(null)
     s.selectMedia(s.doc.media[0].id)
-    s.toast('Board exported — revealed in Finder.', 'success')
   })
-  await page.evaluate(() => {
-    const v = document.querySelector('video') as HTMLVideoElement | null
-    if (v) v.currentTime = 0.5
-  })
-  await page.waitForTimeout(900)
+  await clearToasts()
+  await page.getByRole('button', { name: 'Export ▾' }).click()
+  await page.waitForTimeout(400)
   await page.screenshot({ path: `${OUT}/export.png` })
   verify('export.png')
 })

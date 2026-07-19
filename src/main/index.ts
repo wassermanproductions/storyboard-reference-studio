@@ -11,7 +11,14 @@ import { join, basename, extname, resolve, sep } from 'path'
 import { startControlServer } from './control'
 import { probeMedia } from './ffmpeg'
 import { extractFrame, extractRange, type RangeMode } from './frames'
-import { exportBoard, type ExportInput } from './export'
+import {
+  exportBoard,
+  exportAnimatic,
+  exportShotList,
+  type ExportInput,
+  type AnimaticOptions
+} from './export'
+import { exportPdf } from './pdf'
 import { version as APP_VERSION } from '../../package.json'
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL
@@ -62,6 +69,7 @@ app.on('window-all-closed', () => {
 
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp']
 const VIDEO_EXTS = ['mp4', 'mov', 'm4v', 'webm']
+const AUDIO_EXTS = ['mp3', 'wav', 'm4a', 'aac']
 
 ipcMain.handle('dialog:newProject', async () => {
   if (process.env.SBR_SMOKE_DIR) {
@@ -104,9 +112,10 @@ ipcMain.handle('dialog:importMedia', async () => {
     title: 'Import media',
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Media', extensions: [...IMAGE_EXTS, ...VIDEO_EXTS] },
+      { name: 'Media', extensions: [...IMAGE_EXTS, ...VIDEO_EXTS, ...AUDIO_EXTS] },
       { name: 'Images', extensions: IMAGE_EXTS },
-      { name: 'Videos', extensions: VIDEO_EXTS }
+      { name: 'Videos', extensions: VIDEO_EXTS },
+      { name: 'Audio', extensions: AUDIO_EXTS }
     ]
   })
   if (result.canceled) return []
@@ -195,10 +204,28 @@ ipcMain.handle('project:pasteImage', async (_e, folder: string, data: ArrayBuffe
   }
 })
 
+/** Copy an audio scratch track into media/ and return its project-relative path. */
+ipcMain.handle('project:importAudio', async (_e, folder: string, sourcePath: string) => {
+  const mediaDir = join(folder, 'media')
+  await mkdir(mediaDir, { recursive: true })
+  const name = `${Date.now().toString(36)}-${basename(sourcePath)}`
+  const dest = join(mediaDir, name)
+  await copyFile(sourcePath, dest)
+  return { sourceFile: join('media', name), name: basename(sourcePath) }
+})
+
 ipcMain.handle('file:readProjectFile', async (_e, folder: string, relativePath: string) => {
   const full = guardPath(folder, relativePath)
   const data = await readFile(full)
   return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+})
+
+/** Write base64 PNG bytes to a project-relative path (used for annotation composites). */
+ipcMain.handle('file:writeProjectPng', async (_e, folder: string, relativePath: string, base64: string) => {
+  const full = guardPath(folder, relativePath)
+  await mkdir(join(full, '..'), { recursive: true })
+  await writeFile(full, Buffer.from(base64, 'base64'))
+  return true
 })
 
 ipcMain.handle('shell:showFolder', async (_e, path: string) => {
@@ -240,6 +267,24 @@ ipcMain.handle('ai:describeFrame', async (_e, framePngPath: string, profileId: s
 ipcMain.handle('export:board', async (_e, input: ExportInput) => {
   const out = await exportBoard(input)
   if (out.ok) shell.showItemInFolder(out.packagePath)
+  return out
+})
+
+ipcMain.handle('export:animatic', async (_e, input: ExportInput, opts: AnimaticOptions) => {
+  const out = await exportAnimatic(input, opts ?? {})
+  if (out.ok) shell.showItemInFolder(out.videoPath)
+  return out
+})
+
+ipcMain.handle('export:pdf', async (_e, input: ExportInput) => {
+  const out = await exportPdf(input)
+  if (out.ok) shell.showItemInFolder(out.pdfPath)
+  return out
+})
+
+ipcMain.handle('export:shotlist', async (_e, input: ExportInput) => {
+  const out = await exportShotList(input)
+  if (out.ok) shell.showItemInFolder(out.csvPath)
   return out
 })
 

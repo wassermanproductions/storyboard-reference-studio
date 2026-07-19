@@ -10,8 +10,9 @@ import { useStore, currentProjectJson } from '../store'
 import { useAbsUrl } from '../lib/useMediaUrl'
 import { CropEditor } from './CropEditor'
 import { ensureStill, generatePrompt, templatePrompt } from '../lib/frameOps'
-import { BUILTIN_PROFILES, SHOT_SIZES, CAMERA_ANGLES, LIGHTING_STYLES, MOODS } from '@shared/profiles'
+import { BUILTIN_PROFILES, SHOT_SIZES, CAMERA_ANGLES, LIGHTING_STYLES, MOODS, MOVEMENTS, TRANSITIONS } from '@shared/profiles'
 import { CROP_ASPECTS, fullCropSafe } from '../lib/inspectorHelpers'
+import { ANNOTATION_COLORS } from '@shared/annotations'
 import type { CropAspect } from '@shared/types'
 
 export function Inspector(): JSX.Element {
@@ -28,6 +29,13 @@ export function Inspector(): JSX.Element {
   const setFrameCropAspect = useStore((s) => s.setFrameCropAspect)
   const setFramePrompt = useStore((s) => s.setFramePrompt)
   const setDefaultProfile = useStore((s) => s.setDefaultProfile)
+  const setFrameDuration = useStore((s) => s.setFrameDuration)
+  const setFrameShot = useStore((s) => s.setFrameShot)
+  const clearAnnotations = useStore((s) => s.clearAnnotations)
+  const annotTool = useStore((s) => s.annotTool)
+  const setAnnotTool = useStore((s) => s.setAnnotTool)
+  const annotColor = useStore((s) => s.annotColor)
+  const setAnnotColor = useStore((s) => s.setAnnotColor)
 
   const [profileId, setProfileId] = useState(doc?.settings.defaultProfileId ?? 'midjourney')
   const [promptText, setPromptText] = useState('')
@@ -135,6 +143,65 @@ export function Inspector(): JSX.Element {
           <label>Notes</label>
           <textarea value={frame.notes} onChange={(e) => setFrameNotes(frame.id, e.target.value)} onBlur={save} />
         </div>
+        <div className="field">
+          <label>Duration (s)</label>
+          <input
+            type="number"
+            min={0.25}
+            max={30}
+            step={0.25}
+            value={frame.durationS}
+            onChange={(e) => setFrameDuration(frame.id, Number(e.target.value))}
+            onBlur={save}
+          />
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-title">Shot</div>
+        <div className="field-row">
+          <div className="field" style={{ flex: 1 }}>
+            <label>Scene</label>
+            <input type="text" value={frame.shot.sceneNo} onChange={(e) => setFrameShot(frame.id, { sceneNo: e.target.value })} onBlur={save} />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Shot</label>
+            <input type="text" value={frame.shot.shotNo} onChange={(e) => setFrameShot(frame.id, { shotNo: e.target.value })} onBlur={save} />
+          </div>
+        </div>
+        <ShotSelect label="Size" options={SHOT_SIZES} value={frame.shot.shotSize} onChange={(v) => { setFrameShot(frame.id, { shotSize: v }); void save() }} />
+        <ShotSelect label="Angle" options={CAMERA_ANGLES} value={frame.shot.cameraAngle} onChange={(v) => { setFrameShot(frame.id, { cameraAngle: v }); void save() }} />
+        <div className="field">
+          <label>Lens</label>
+          <input type="text" value={frame.shot.lens} placeholder="e.g. 35mm" onChange={(e) => setFrameShot(frame.id, { lens: e.target.value })} onBlur={save} />
+        </div>
+        <ShotSelect label="Movement" options={MOVEMENTS} value={frame.shot.movement} onChange={(v) => { setFrameShot(frame.id, { movement: v }); void save() }} />
+        <ShotSelect label="Transition" options={TRANSITIONS} value={frame.shot.transition} onChange={(v) => { setFrameShot(frame.id, { transition: v }); void save() }} />
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-title">Annotate</div>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          Draw camera-move arrows or action text on the stage. Pick a tool, then drag (arrow) or click (text).
+        </div>
+        <div className="seg" style={{ marginBottom: 8 }}>
+          <button className={annotTool === 'arrow' ? 'active' : ''} onClick={() => setAnnotTool(annotTool === 'arrow' ? 'none' : 'arrow')}>↗ Arrow</button>
+          <button className={annotTool === 'text' ? 'active' : ''} onClick={() => setAnnotTool(annotTool === 'text' ? 'none' : 'text')}>T Text</button>
+        </div>
+        <div className="anno-swatches">
+          {ANNOTATION_COLORS.map((c) => (
+            <button
+              key={c}
+              className={`anno-swatch ${annotColor === c ? 'sel' : ''}`}
+              style={{ background: c }}
+              onClick={() => setAnnotColor(c)}
+              title={c}
+            />
+          ))}
+          <button className="btn small" style={{ marginLeft: 'auto' }} onClick={() => { clearAnnotations(frame.id); void save() }} disabled={frame.annotations.length === 0}>
+            Clear
+          </button>
+        </div>
       </div>
 
       <div className="panel-section">
@@ -189,8 +256,24 @@ export function Inspector(): JSX.Element {
             <div className="hint" style={{ marginBottom: 8 }}>
               No API? Fill these and build a prompt scaffold from the frame's metadata.
             </div>
-            <TplSelect label="Shot size" options={SHOT_SIZES} value={tpl.shotSize} onChange={(v) => setTpl({ ...tpl, shotSize: v })} />
-            <TplSelect label="Camera angle" options={CAMERA_ANGLES} value={tpl.cameraAngle} onChange={(v) => setTpl({ ...tpl, cameraAngle: v })} />
+            <TplSelect
+              label="Shot size"
+              options={SHOT_SIZES}
+              value={tpl.shotSize}
+              onChange={(v) => {
+                setTpl({ ...tpl, shotSize: v })
+                if (frameId) { setFrameShot(frameId, { shotSize: v }); void save() }
+              }}
+            />
+            <TplSelect
+              label="Camera angle"
+              options={CAMERA_ANGLES}
+              value={tpl.cameraAngle}
+              onChange={(v) => {
+                setTpl({ ...tpl, cameraAngle: v })
+                if (frameId) { setFrameShot(frameId, { cameraAngle: v }); void save() }
+              }}
+            />
             <TplSelect label="Lighting" options={LIGHTING_STYLES} value={tpl.lighting} onChange={(v) => setTpl({ ...tpl, lighting: v })} />
             <TplSelect label="Mood" options={MOODS} value={tpl.mood} onChange={(v) => setTpl({ ...tpl, mood: v })} />
             <button className="btn block" onClick={onApplyTemplate}>Build template prompt</button>
@@ -211,6 +294,26 @@ function TplSelect({ label, options, value, onChange }: {
     <div className="field">
       <label>{label}</label>
       <select value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+/** Like TplSelect but with a blank "—" option (shot metadata defaults to ''). */
+function ShotSelect({ label, options, value, onChange }: {
+  label: string
+  options: string[]
+  value: string
+  onChange: (v: string) => void
+}): JSX.Element {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">—</option>
         {options.map((o) => (
           <option key={o} value={o}>{o}</option>
         ))}

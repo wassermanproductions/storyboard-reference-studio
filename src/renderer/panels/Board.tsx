@@ -4,10 +4,11 @@
  * missing" and "Export board" with running counts.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore, currentProjectJson } from '../store'
 import { useAbsUrl } from '../lib/useMediaUrl'
-import { ensureStill, generatePrompt, buildExportInputs } from '../lib/frameOps'
+import { ensureStill, generatePrompt, buildExportInputs, audioAbsPath } from '../lib/frameOps'
+import { renderAnnotationsSvg } from '@shared/annotations'
 import type { Frame } from '@shared/types'
 
 function BoardCard({ frame, index }: { frame: Frame; index: number }): JSX.Element {
@@ -56,7 +57,16 @@ function BoardCard({ frame, index }: { frame: Frame; index: number }): JSX.Eleme
       }}
     >
       <button className="board-card-del" onClick={onRemove} title="Remove (⌫)">✕</button>
-      {url ? <img className="board-card-thumb" src={url} alt={frame.label} /> : <div className="board-card-thumb" />}
+      <div className="board-card-thumb-wrap">
+        {url ? <img className="board-card-thumb" src={url} alt={frame.label} /> : <div className="board-card-thumb" />}
+        {frame.annotations.length > 0 && still && (
+          <div
+            className="board-card-anno"
+            dangerouslySetInnerHTML={{ __html: renderAnnotationsSvg(frame, still.width, still.height) }}
+          />
+        )}
+        <span className="board-card-dur">{frame.durationS.toFixed(1)}s</span>
+      </div>
       <div className="board-card-body">
         <div className="board-card-label" title={frame.label}>{frame.label || '(untitled)'}</div>
         <div className="board-card-meta">
@@ -78,8 +88,20 @@ export function Board(): JSX.Element {
   const defaultProfile = useStore((s) => s.doc?.settings.defaultProfileId ?? 'midjourney')
   const promptingAll = useStore((s) => s.promptingAll)
   const setPromptingAll = useStore((s) => s.setPromptingAll)
+  const setPresentOpen = useStore((s) => s.setPresentOpen)
   const toast = useStore((s) => s.toast)
   const [exporting, setExporting] = useState(false)
+  const [exportMenu, setExportMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!exportMenu) return
+    const onDown = (e: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setExportMenu(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [exportMenu])
 
   const withPrompt = frames.filter((f) => f.prompt?.text).length
   const missing = frames.length - withPrompt
@@ -105,21 +127,37 @@ export function Board(): JSX.Element {
     if (!done && !failed) toast('All frames already have prompts.', 'info')
   }, [frames, defaultProfile, folder, setPromptingAll, toast])
 
-  const onExport = useCallback(async () => {
-    if (!folder || frames.length === 0) return
-    setExporting(true)
-    try {
-      // Make sure every frame has a still on disk before exporting.
-      for (const f of frames) await ensureStill(f.id)
-      const inputs = await buildExportInputs()
-      const exportsRoot = `${folder}${folder.includes('\\') ? '\\' : '/'}exports`
-      const res = await window.sbr.exportBoard({ projectName, exportsRoot, frames: inputs })
-      if (res.ok) toast('Board exported — revealed in Finder.', 'success')
-      else toast(`Export failed: ${res.error ?? ''}`, 'error')
-    } finally {
-      setExporting(false)
-    }
-  }, [folder, frames, projectName, toast])
+  const runExport = useCallback(
+    async (kind: 'board' | 'animatic' | 'pdf' | 'shotlist') => {
+      if (!folder || frames.length === 0) return
+      setExportMenu(false)
+      setExporting(true)
+      try {
+        for (const f of frames) await ensureStill(f.id)
+        const inputs = await buildExportInputs()
+        const exportsRoot = `${folder}${folder.includes('\\') ? '\\' : '/'}exports`
+        const payload = { projectName, exportsRoot, frames: inputs }
+        if (kind === 'board') {
+          const res = await window.sbr.exportBoard(payload)
+          toast(res.ok ? 'Board exported — revealed in Finder.' : `Export failed: ${res.error ?? ''}`, res.ok ? 'success' : 'error')
+        } else if (kind === 'animatic') {
+          const res = await window.sbr.exportAnimatic(payload, { burnLabel: true, audioPath: audioAbsPath() })
+          toast(res.ok ? 'Animatic exported — revealed in Finder.' : `Animatic failed: ${res.error ?? ''}`, res.ok ? 'success' : 'error')
+        } else if (kind === 'pdf') {
+          const res = await window.sbr.exportPdf(payload)
+          toast(res.ok ? 'PDF exported — revealed in Finder.' : `PDF failed: ${res.error ?? ''}`, res.ok ? 'success' : 'error')
+        } else {
+          const res = await window.sbr.exportShotlist(payload)
+          toast(res.ok ? 'Shot list exported — revealed in Finder.' : `Shot list failed: ${res.error ?? ''}`, res.ok ? 'success' : 'error')
+        }
+      } finally {
+        setExporting(false)
+      }
+    },
+    [folder, frames, projectName, toast]
+  )
+
+  const onExport = useCallback(() => runExport('board'), [runExport])
 
   return (
     <div className="board">
@@ -127,12 +165,28 @@ export function Board(): JSX.Element {
         <span className="panel-title" style={{ margin: 0 }}>Board</span>
         <span className="board-count">{frames.length} frames · {withPrompt} prompted · {missing} missing</span>
         <div style={{ flex: 1 }} />
+        <button className="btn small" onClick={() => setPresentOpen(true)} disabled={frames.length === 0} title="Present / play the board (P)">
+          ▶ Present
+        </button>
         <button className="btn small" onClick={onPromptAll} disabled={promptingAll || missing === 0}>
           {promptingAll ? 'Prompting…' : 'Prompt all missing'}
         </button>
         <button className="btn small primary" onClick={onExport} disabled={exporting || frames.length === 0}>
           {exporting ? 'Exporting…' : 'Export board'}
         </button>
+        <div className="export-menu-wrap" ref={menuRef}>
+          <button className="btn small" onClick={() => setExportMenu((v) => !v)} disabled={exporting || frames.length === 0} title="More export formats">
+            Export ▾
+          </button>
+          {exportMenu && (
+            <div className="export-menu">
+              <button onClick={() => runExport('board')}>Board package</button>
+              <button onClick={() => runExport('animatic')}>Animatic (MP4)</button>
+              <button onClick={() => runExport('pdf')}>PDF storyboard</button>
+              <button onClick={() => runExport('shotlist')}>Shot list (CSV)</button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="board-strip">
         {frames.length === 0 ? (

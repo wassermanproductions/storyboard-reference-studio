@@ -4,31 +4,49 @@
  * stored normalized (0..1) in source coordinates.
  */
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { aspectRatio } from '@shared/types'
 import type { Crop } from '@shared/types'
 
-export function CropEditor({ frameId, crop, imgW, imgH }: {
+export function CropEditor({ frameId, crop, imgW, imgH, guides = false }: {
   frameId: string
   crop: Crop
   imgW: number
   imgH: number
+  guides?: boolean
 }): JSX.Element {
   const setFrameCrop = useStore((s) => s.setFrameCrop)
   const boxRef = useRef<HTMLDivElement>(null)
 
+  // Track the box size in state so the rect is recomputed once the ref attaches
+  // (first render happens before boxRef is set) and whenever the box resizes.
+  const [boxSize, setBoxSize] = useState({ w: 0, h: 0 })
+  useLayoutEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    const measure = (): void => {
+      const w = el.clientWidth
+      const h = el.clientHeight
+      setBoxSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   // The displayed image is letterboxed inside the box; compute the content rect.
   const contentRect = useCallback((): { left: number; top: number; w: number; h: number } => {
     const el = boxRef.current
-    if (!el || !imgW || !imgH) return { left: 0, top: 0, w: 1, h: 1 }
-    const bw = el.clientWidth
-    const bh = el.clientHeight
+    const bw = el ? el.clientWidth : boxSize.w
+    const bh = el ? el.clientHeight : boxSize.h
+    if (!bw || !bh || !imgW || !imgH) return { left: 0, top: 0, w: 1, h: 1 }
     const scale = Math.min(bw / imgW, bh / imgH)
     const w = imgW * scale
     const h = imgH * scale
     return { left: (bw - w) / 2, top: (bh - h) / 2, w, h }
-  }, [imgW, imgH])
+  }, [imgW, imgH, boxSize])
 
   const ar = aspectRatio(crop.aspect)
 
@@ -119,9 +137,25 @@ export function CropEditor({ frameId, crop, imgW, imgH }: {
     height: crop.h * rect.h
   }
 
+  const outW = Math.max(1, Math.round(crop.w * imgW))
+  const outH = Math.max(1, Math.round(crop.h * imgH))
+  const aspectLabel = crop.aspect && crop.aspect !== 'free' ? crop.aspect : 'free'
+
   return (
     <div className="crop-editor" ref={boxRef}>
       <div className="crop-rect" style={style} onMouseDown={startMove}>
+        {guides && (
+          <>
+            <div className="crop-thirds">
+              <span className="v" style={{ left: '33.333%' }} />
+              <span className="v" style={{ left: '66.666%' }} />
+              <span className="h" style={{ top: '33.333%' }} />
+              <span className="h" style={{ top: '66.666%' }} />
+            </div>
+            <div className="crop-safe" />
+          </>
+        )}
+        <div className="crop-readout">{aspectLabel} · {outW}×{outH}</div>
         <div className="handle nw" onMouseDown={startResize('nw')} />
         <div className="handle ne" onMouseDown={startResize('ne')} />
         <div className="handle sw" onMouseDown={startResize('sw')} />

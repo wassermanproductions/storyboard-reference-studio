@@ -209,6 +209,38 @@ export const LIGHTING_STYLES = [
   'high-key'
 ]
 
+export const MOVEMENTS = [
+  'Static',
+  'Pan L→R',
+  'Pan R→L',
+  'Tilt up',
+  'Tilt down',
+  'Dolly in',
+  'Dolly out',
+  'Push-in',
+  'Pull-back',
+  'Track L',
+  'Track R',
+  'Crane up',
+  'Crane down',
+  'Handheld',
+  'Whip pan',
+  'Zoom in',
+  'Zoom out'
+]
+
+export const TRANSITIONS = [
+  'Cut',
+  'Match cut',
+  'Dissolve',
+  'Fade in',
+  'Fade out',
+  'Whip',
+  'Smash cut',
+  'J-cut',
+  'L-cut'
+]
+
 export const MOODS = [
   'neutral',
   'tense',

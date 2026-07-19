@@ -3,8 +3,8 @@
  * parseProject never throws on malformed input; it returns { doc, issues }.
  */
 
-import type { Project, MediaItem, Frame, MediaKind, Crop } from './types'
-import { PROJECT_VERSION } from './types'
+import type { Project, MediaItem, Frame, MediaKind, Crop, ShotMeta, Annotation } from './types'
+import { PROJECT_VERSION, DEFAULT_FRAME_DURATION_S, emptyShotMeta } from './types'
 import { DEFAULT_PROFILE_ID } from './profiles'
 
 /** Short, collision-resistant id (no external deps). */
@@ -21,7 +21,7 @@ export function createProject(name: string): Project {
     name,
     media: [],
     frames: [],
-    settings: { defaultProfileId: DEFAULT_PROFILE_ID }
+    settings: { defaultProfileId: DEFAULT_PROFILE_ID, audioFile: null }
   }
 }
 
@@ -54,7 +54,10 @@ export function createFrame(
     notes: '',
     order,
     crop: null,
-    prompt: null
+    prompt: null,
+    durationS: DEFAULT_FRAME_DURATION_S,
+    shot: emptyShotMeta(),
+    annotations: []
   }
 }
 
@@ -97,8 +100,10 @@ export function parseProject(json: string): ParseOutcome {
     : []
 
   const settings = (o.settings as Record<string, unknown>) ?? {}
+  // Migrate any older/newer document to the current version; sanitizeFrame +
+  // settings handling above fill in every v2 default, so this is a silent v1→v2.
   const doc: Project = {
-    version: typeof o.version === 'number' ? o.version : PROJECT_VERSION,
+    version: PROJECT_VERSION,
     id: typeof o.id === 'string' ? o.id : newId('proj'),
     name: typeof o.name === 'string' ? o.name : 'Untitled',
     media,
@@ -107,7 +112,8 @@ export function parseProject(json: string): ParseOutcome {
       defaultProfileId:
         typeof settings.defaultProfileId === 'string'
           ? (settings.defaultProfileId as string)
-          : DEFAULT_PROFILE_ID
+          : DEFAULT_PROFILE_ID,
+      audioFile: typeof settings.audioFile === 'string' ? (settings.audioFile as string) : null
     }
   }
   return { doc, issues }
@@ -174,6 +180,56 @@ function sanitizeFrame(f: unknown, issues: ParseIssue[]): Frame | null {
     notes: typeof o.notes === 'string' ? o.notes : '',
     order: typeof o.order === 'number' ? o.order : 0,
     crop,
-    prompt
+    prompt,
+    durationS:
+      typeof o.durationS === 'number' && isFinite(o.durationS) && o.durationS > 0
+        ? o.durationS
+        : DEFAULT_FRAME_DURATION_S,
+    shot: sanitizeShot(o.shot),
+    annotations: Array.isArray(o.annotations)
+      ? (o.annotations as unknown[]).map(sanitizeAnnotation).filter(Boolean as unknown as (x: Annotation | null) => x is Annotation)
+      : []
+  }
+}
+
+function sanitizeShot(s: unknown): ShotMeta {
+  const base = emptyShotMeta()
+  if (typeof s !== 'object' || s === null) return base
+  const o = s as Record<string, unknown>
+  const str = (k: keyof ShotMeta): string => (typeof o[k] === 'string' ? (o[k] as string) : '')
+  return {
+    sceneNo: str('sceneNo'),
+    shotNo: str('shotNo'),
+    shotSize: str('shotSize'),
+    cameraAngle: str('cameraAngle'),
+    lens: str('lens'),
+    movement: str('movement'),
+    transition: str('transition')
+  }
+}
+
+function sanitizeAnnotation(a: unknown): Annotation | null {
+  if (typeof a !== 'object' || a === null) return null
+  const o = a as Record<string, unknown>
+  const kind = o.kind === 'text' ? 'text' : o.kind === 'arrow' ? 'arrow' : null
+  if (!kind) return null
+  const points = Array.isArray(o.points)
+    ? (o.points as unknown[])
+        .map((p) => {
+          if (typeof p !== 'object' || p === null) return null
+          const pp = p as Record<string, unknown>
+          const x = typeof pp.x === 'number' ? pp.x : 0
+          const y = typeof pp.y === 'number' ? pp.y : 0
+          return { x, y }
+        })
+        .filter(Boolean as unknown as (x: { x: number; y: number } | null) => x is { x: number; y: number })
+    : []
+  if (points.length === 0) return null
+  return {
+    id: typeof o.id === 'string' ? o.id : newId('anno'),
+    kind,
+    points,
+    text: typeof o.text === 'string' ? o.text : undefined,
+    color: typeof o.color === 'string' ? o.color : '#ff5533'
   }
 }

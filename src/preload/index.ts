@@ -4,7 +4,7 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DescribeResult } from '../shared/types'
+import type { DescribeResult, ShotMeta, Annotation } from '../shared/types'
 
 export interface ImportedMedia {
   kind: 'image' | 'video'
@@ -14,6 +14,11 @@ export interface ImportedMedia {
   height: number
   durationS?: number
   fps?: number
+}
+
+export interface ImportedAudio {
+  sourceFile: string
+  name: string
 }
 
 export type RangeMode =
@@ -38,6 +43,20 @@ export interface ExportFrameInput {
   sourceHeight: number
   timeS: number
   mediaName: string
+  durationS?: number
+  shot?: ShotMeta
+  annotations?: Annotation[]
+}
+
+export interface ExportBoardInput {
+  projectName: string
+  exportsRoot: string
+  frames: ExportFrameInput[]
+}
+
+export interface AnimaticOptions {
+  burnLabel?: boolean
+  audioPath?: string | null
 }
 
 export interface SbrAPI {
@@ -53,8 +72,10 @@ export interface SbrAPI {
     folder: string
   }>
   importMedia(folder: string, sourcePath: string): Promise<ImportedMedia>
+  importAudio(folder: string, sourcePath: string): Promise<ImportedAudio>
   pasteImage(folder: string, data: ArrayBuffer, index: number): Promise<ImportedMedia>
   readProjectFile(folder: string, relativePath: string): Promise<ArrayBuffer>
+  writeProjectPng(folder: string, relativePath: string, base64: string): Promise<boolean>
   showFolder(path: string): Promise<void>
   openExternal(url: string): Promise<boolean>
   extractFrame(
@@ -70,11 +91,13 @@ export interface SbrAPI {
     outDir: string
   ): Promise<ExtractRangeResult>
   describeFrame(framePngPath: string, profileId: string, extraContext: string): Promise<DescribeResult>
-  exportBoard(input: {
-    projectName: string
-    exportsRoot: string
-    frames: ExportFrameInput[]
-  }): Promise<{ ok: boolean; error?: string; packagePath: string }>
+  exportBoard(input: ExportBoardInput): Promise<{ ok: boolean; error?: string; packagePath: string }>
+  exportAnimatic(
+    input: ExportBoardInput,
+    opts: AnimaticOptions
+  ): Promise<{ ok: boolean; error?: string; videoPath: string }>
+  exportPdf(input: ExportBoardInput): Promise<{ ok: boolean; error?: string; pdfPath: string }>
+  exportShotlist(input: ExportBoardInput): Promise<{ ok: boolean; error?: string; csvPath: string }>
   ensureDir(path: string): Promise<boolean>
   tempDir(): Promise<string>
   versions(): Promise<{ app: string; electron: string; node: string }>
@@ -90,8 +113,10 @@ const api: SbrAPI = {
   saveBackup: (folder, json) => ipcRenderer.invoke('project:saveBackup', folder, json),
   loadProject: (folder) => ipcRenderer.invoke('project:load', folder),
   importMedia: (folder, sourcePath) => ipcRenderer.invoke('project:importMedia', folder, sourcePath),
+  importAudio: (folder, sourcePath) => ipcRenderer.invoke('project:importAudio', folder, sourcePath),
   pasteImage: (folder, data, index) => ipcRenderer.invoke('project:pasteImage', folder, data, index),
   readProjectFile: (folder, rel) => ipcRenderer.invoke('file:readProjectFile', folder, rel),
+  writeProjectPng: (folder, rel, base64) => ipcRenderer.invoke('file:writeProjectPng', folder, rel, base64),
   showFolder: (path) => ipcRenderer.invoke('shell:showFolder', path),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   extractFrame: (mediaPath, timeS, outPng) => ipcRenderer.invoke('frames:extract', mediaPath, timeS, outPng),
@@ -100,6 +125,9 @@ const api: SbrAPI = {
   describeFrame: (framePngPath, profileId, extraContext) =>
     ipcRenderer.invoke('ai:describeFrame', framePngPath, profileId, extraContext),
   exportBoard: (input) => ipcRenderer.invoke('export:board', input),
+  exportAnimatic: (input, opts) => ipcRenderer.invoke('export:animatic', input, opts),
+  exportPdf: (input) => ipcRenderer.invoke('export:pdf', input),
+  exportShotlist: (input) => ipcRenderer.invoke('export:shotlist', input),
   ensureDir: (path) => ipcRenderer.invoke('fs:ensureDir', path),
   tempDir: () => ipcRenderer.invoke('app:tempDir'),
   versions: () => ipcRenderer.invoke('app:versions'),

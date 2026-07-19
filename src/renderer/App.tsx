@@ -11,6 +11,7 @@ import { Inspector } from './panels/Inspector'
 import { Board } from './panels/Board'
 import { Toasts } from './panels/Toasts'
 import { HelpOverlay } from './panels/Help'
+import { Present } from './panels/Present'
 
 function CreditLink({ url, children }: { url: string; children: string }): JSX.Element {
   return (
@@ -138,7 +139,26 @@ function useKeyboard(): void {
         s.setHelpOpen(false)
         return
       }
+      // Present mode owns the keyboard while it's open (it captures keys).
+      if (s.presentOpen) return
       if (inField) return
+
+      if (e.key === 'p' || e.key === 'P') {
+        if (s.doc && s.orderedFrames().length > 0) s.setPresentOpen(true)
+        return
+      }
+      if (e.key === 'a' || e.key === 'A') {
+        s.setAnnotTool(s.annotTool === 'arrow' ? 'none' : 'arrow')
+        return
+      }
+      if (e.key === 't' || e.key === 'T') {
+        s.setAnnotTool(s.annotTool === 'text' ? 'none' : 'text')
+        return
+      }
+      if (e.key === 'g' || e.key === 'G') {
+        s.setGuidesOn(!s.guidesOn)
+        return
+      }
 
       if (e.key === ' ') {
         e.preventDefault()
@@ -156,6 +176,14 @@ function useKeyboard(): void {
       } else if (e.key === 'b' || e.key === 'B') {
         transport?.bookmark()
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        // A selected annotation deletes first (leaves the frame in place).
+        if (s.selectedAnnotationId && s.selectedFrameId) {
+          s.removeAnnotation(s.selectedFrameId, s.selectedAnnotationId)
+          s.selectAnnotation(null)
+          const json = currentProjectJson()
+          if (json && s.projectFolder) void window.sbr.saveProject(s.projectFolder, json)
+          return
+        }
         if (s.selectedFrameId) {
           const frame = s.frame(s.selectedFrameId)
           if (frame?.prompt?.text && !window.confirm('This frame has a prompt. Remove it?')) return
@@ -220,6 +248,7 @@ export function App(): JSX.Element {
       </div>
       <Toasts />
       <HelpOverlay />
+      <Present />
     </div>
   )
 }

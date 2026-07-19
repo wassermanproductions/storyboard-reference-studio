@@ -15,9 +15,14 @@
 import { mkdir, writeFile, copyFile } from 'fs/promises'
 import { join } from 'path'
 import { resolveFfmpeg, run } from './ffmpeg'
-import { slugLabel } from '../shared/types'
-import type { Crop } from '../shared/types'
+import { slugLabel, emptyShotMeta } from '../shared/types'
+import type { Crop, ShotMeta, Annotation } from '../shared/types'
 
+/**
+ * Each frame's `sourcePng` is a full-resolution still with any annotations
+ * already composited on (the renderer draws them onto a canvas before export —
+ * see frameOps.compositeAnnotated). The main process only crops + assembles.
+ */
 export interface ExportFrameInput {
   /** Absolute path to the source still already extracted at full res (PNG). */
   sourcePng: string
@@ -31,6 +36,12 @@ export interface ExportFrameInput {
   sourceHeight: number
   timeS: number
   mediaName: string
+  /** Animatic hold time (seconds). Optional; defaults to 2. */
+  durationS?: number
+  /** Shot-list metadata. Optional; defaults to all-blank. */
+  shot?: ShotMeta
+  /** Camera-move / action annotations (already composited into sourcePng). */
+  annotations?: Annotation[]
 }
 
 export interface ExportInput {
@@ -43,6 +54,33 @@ export interface ExportOutput {
   ok: boolean
   error?: string
   packagePath: string
+}
+
+export function exportStamp(): string {
+  return new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+$/, '')
+}
+
+function stamp(): string {
+  return exportStamp()
+}
+
+/**
+ * Produce a display PNG for a frame: the crop applied at full resolution to the
+ * (already annotation-composited) source still. Used by the PDF export. Falls
+ * back to the plain still if cropping fails, so a frame is never lost.
+ */
+export async function renderDisplayStill(
+  f: ExportFrameInput,
+  workDir: string,
+  index: number
+): Promise<string> {
+  const ffmpeg = await resolveFfmpeg()
+  await mkdir(workDir, { recursive: true })
+  const filter = cropFilter(f.crop, f.sourceWidth, f.sourceHeight)
+  if (!filter) return f.sourcePng
+  const out = join(workDir, `disp-${String(index).padStart(3, '0')}.png`)
+  const res = await run(ffmpeg, ['-y', '-i', f.sourcePng, '-vf', filter, out])
+  return res.code === 0 ? out : f.sourcePng
 }
 
 /** ffmpeg crop filter from a normalized crop, snapped to even pixels. */
@@ -67,16 +105,13 @@ function escapeDrawtext(s: string): string {
 
 export async function exportBoard(input: ExportInput): Promise<ExportOutput> {
   const ffmpeg = await resolveFfmpeg()
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[:T]/g, '-')
-    .replace(/\..+$/, '')
-  const pkg = join(input.exportsRoot, `board-${stamp}`)
+  const st = stamp()
+  const pkg = join(input.exportsRoot, `board-${st}`)
   await mkdir(pkg, { recursive: true })
 
   const stillPaths: string[] = []
   const promptsJson: unknown[] = []
-  const mdLines: string[] = [`# ${input.projectName} — storyboard`, '', `_${input.frames.length} frames · exported ${stamp}_`, '']
+  const mdLines: string[] = [`# ${input.projectName} — storyboard`, '', `_${input.frames.length} frames · exported ${st}_`, '']
 
   for (let i = 0; i < input.frames.length; i++) {
     const f = input.frames[i]!
@@ -86,7 +121,8 @@ export async function exportBoard(input: ExportInput): Promise<ExportOutput> {
     await mkdir(dir, { recursive: true })
     const stillOut = join(dir, 'still.png')
 
-    // Apply crop at full source resolution if one is set, else copy.
+    // sourcePng already has annotations composited (renderer-side). Apply the
+    // crop at full source resolution if one is set, else copy.
     const filter = cropFilter(f.crop, f.sourceWidth, f.sourceHeight)
     if (filter) {
       const res = await run(ffmpeg, ['-y', '-i', f.sourcePng, '-vf', filter, stillOut])
@@ -125,7 +161,7 @@ export async function exportBoard(input: ExportInput): Promise<ExportOutput> {
 
   await writeFile(
     join(pkg, 'prompts.json'),
-    JSON.stringify({ project: input.projectName, exportedAt: stamp, frames: promptsJson }, null, 2),
+    JSON.stringify({ project: input.projectName, exportedAt: st, frames: promptsJson }, null, 2),
     'utf-8'
   )
   await writeFile(join(pkg, 'board.md'), mdLines.join('\n'), 'utf-8')
@@ -183,4 +219,137 @@ async function buildContactSheet(
     // Last resort: at least copy the first cell so the file exists.
     await copyFile(cellFiles[0]!, sheetOut)
   }
+}
+
+/* ------------------------------ animatic ------------------------------- */
+
+export interface AnimaticOptions {
+  /** Burn each frame's label into the bottom of the picture. */
+  burnLabel?: boolean
+  /** Absolute path to a scratch-track audio file to mux (or null). */
+  audioPath?: string | null
+}
+
+export interface AnimaticOutput {
+  ok: boolean
+  error?: string
+  videoPath: string
+}
+
+const ANIMATIC_W = 1920
+const ANIMATIC_H = 1080
+
+/**
+ * Export an animatic MP4: each frame held for its durationS, scaled/padded to
+ * 1920×1080 (letterbox, crop + annotations respected), 24fps, yuv420p. If an
+ * audio scratch track is supplied it is muxed with -shortest.
+ */
+export async function exportAnimatic(input: ExportInput, opts: AnimaticOptions = {}): Promise<AnimaticOutput> {
+  const ffmpeg = await resolveFfmpeg()
+  const st = stamp()
+  await mkdir(input.exportsRoot, { recursive: true })
+  const videoPath = join(input.exportsRoot, `animatic-${st}.mp4`)
+
+  if (input.frames.length === 0) return { ok: false, error: 'no frames to export', videoPath }
+
+  // Encode one constant-framerate segment per frame, each held for exactly its
+  // duration (deterministic totals), then concat the segments. sourcePng already
+  // has annotations composited; we crop + scale/pad to 1920×1080 here.
+  const cellDir = join(input.exportsRoot, `.animatic-${st}`)
+  await mkdir(cellDir, { recursive: true })
+
+  const segs: string[] = []
+  for (let i = 0; i < input.frames.length; i++) {
+    const f = input.frames[i]!
+    const dur = Math.max(0.25, Math.min(30, f.durationS ?? 2))
+    const parts: string[] = []
+    const crop = cropFilter(f.crop, f.sourceWidth, f.sourceHeight)
+    if (crop) parts.push(crop)
+    parts.push(`scale=${ANIMATIC_W}:${ANIMATIC_H}:force_original_aspect_ratio=decrease`)
+    parts.push(`pad=${ANIMATIC_W}:${ANIMATIC_H}:(ow-iw)/2:(oh-ih)/2:color=black`)
+    if (opts.burnLabel && f.label) {
+      parts.push(
+        `drawtext=text='${escapeDrawtext(f.label)}':x=40:y=${ANIMATIC_H - 72}:fontsize=36:fontcolor=white:box=1:boxcolor=0x000000AA:boxborderw=12`
+      )
+    }
+    const seg = join(cellDir, `seg-${String(i).padStart(4, '0')}.mp4`)
+    const res = await run(ffmpeg, [
+      '-y', '-loop', '1', '-i', f.sourcePng, '-t', dur.toFixed(3),
+      '-vf', parts.join(','), '-r', '24', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', seg
+    ])
+    if (res.code === 0) segs.push(seg)
+  }
+  if (segs.length === 0) return { ok: false, error: 'no frames rendered', videoPath }
+
+  const q = (p: string): string => `file '${p.replace(/'/g, "'\\''")}'`
+  const listPath = join(cellDir, 'list.txt')
+  await writeFile(listPath, segs.map(q).join('\n') + '\n', 'utf-8')
+
+  // Concat the segments; mux the scratch track (if any) with -shortest.
+  const args = ['-y', '-f', 'concat', '-safe', '0', '-i', listPath]
+  if (opts.audioPath) {
+    args.push('-i', opts.audioPath, '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest')
+  } else {
+    args.push('-c', 'copy')
+  }
+  args.push(videoPath)
+
+  const enc = await run(ffmpeg, args)
+  if (enc.code !== 0) return { ok: false, error: enc.stderr.slice(-400), videoPath }
+  return { ok: true, videoPath }
+}
+
+/* ------------------------------ shot list ------------------------------ */
+
+export interface ShotListOutput {
+  ok: boolean
+  error?: string
+  csvPath: string
+}
+
+function csvCell(s: string | number): string {
+  const v = String(s ?? '')
+  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`
+  return v
+}
+
+/** Export the board as a shot-list CSV. Returns the file path. */
+export async function exportShotList(input: ExportInput): Promise<ShotListOutput> {
+  const st = stamp()
+  await mkdir(input.exportsRoot, { recursive: true })
+  const csvPath = join(input.exportsRoot, `shotlist-${st}.csv`)
+  const header = [
+    '#', 'Scene', 'Shot', 'Label', 'Size', 'Angle', 'Lens', 'Movement',
+    'Transition', 'Duration (s)', 'Time in source', 'Notes', 'Prompt profile', 'Prompt'
+  ]
+  const rows = [header.map(csvCell).join(',')]
+  input.frames.forEach((f, i) => {
+    const shot = f.shot ?? emptyShotMeta()
+    rows.push(
+      [
+        i + 1,
+        shot.sceneNo,
+        shot.shotNo,
+        f.label,
+        shot.shotSize,
+        shot.cameraAngle,
+        shot.lens,
+        shot.movement,
+        shot.transition,
+        (f.durationS ?? 2).toFixed(2),
+        f.timeS.toFixed(2),
+        f.notes,
+        f.profileId,
+        f.promptText
+      ]
+        .map(csvCell)
+        .join(',')
+    )
+  })
+  try {
+    await writeFile(csvPath, rows.join('\r\n') + '\r\n', 'utf-8')
+  } catch (e) {
+    return { ok: false, error: (e as Error).message, csvPath }
+  }
+  return { ok: true, csvPath }
 }

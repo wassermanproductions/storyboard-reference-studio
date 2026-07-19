@@ -9,14 +9,15 @@
  */
 
 import { create } from 'zustand'
-import type { Project, MediaItem, Frame, Crop, CropAspect } from '@shared/types'
+import type { Project, MediaItem, Frame, Crop, CropAspect, ShotMeta, Annotation } from '@shared/types'
 import {
   createProject,
   createMediaItem,
   createFrame,
   serializeProject,
   parseProject,
-  fullCrop
+  fullCrop,
+  newId
 } from '@shared/schema'
 import { DEFAULT_PROFILE_ID } from '@shared/profiles'
 import { absMediaPath } from './lib/paths'
@@ -49,6 +50,20 @@ interface SbrState {
   /** True while a batch prompt run is in flight. */
   promptingAll: boolean
 
+  /* ephemeral view/tool state (not part of the saved document) */
+  /** Center stage shows the selected frame ('frame') or the clip ('clip'). */
+  viewMode: 'clip' | 'frame'
+  /** Active annotation tool on the stage. */
+  annotTool: 'none' | 'arrow' | 'text'
+  /** Active annotation color. */
+  annotColor: string
+  /** Rule-of-thirds + action-safe guides visible on the stage. */
+  guidesOn: boolean
+  /** Selected annotation (for delete), or null. */
+  selectedAnnotationId: string | null
+  /** Present / play mode overlay open. */
+  presentOpen: boolean
+
   /* lifecycle */
   newProject(folder: string, name: string): void
   loadFromJson(folder: string, json: string): boolean
@@ -58,6 +73,12 @@ interface SbrState {
   /* selection */
   selectMedia(id: string | null): void
   selectFrame(id: string | null): void
+  setViewMode(mode: 'clip' | 'frame'): void
+  setAnnotTool(tool: 'none' | 'arrow' | 'text'): void
+  setAnnotColor(color: string): void
+  setGuidesOn(on: boolean): void
+  selectAnnotation(id: string | null): void
+  setPresentOpen(open: boolean): void
 
   /* mutations */
   mutate(label: string, fn: (doc: Project) => void): void
@@ -79,6 +100,13 @@ interface SbrState {
   setFrameCropAspect(frameId: string, aspect: CropAspect | null): void
   setFramePrompt(frameId: string, text: string, profileId: string, model: string): void
   setDefaultProfile(id: string): void
+  setFrameDuration(frameId: string, durationS: number): void
+  setFrameShot(frameId: string, patch: Partial<ShotMeta>): void
+  addAnnotation(frameId: string, annotation: Omit<Annotation, 'id'> & { id?: string }): Annotation
+  updateAnnotation(frameId: string, annotationId: string, patch: Partial<Annotation>): void
+  removeAnnotation(frameId: string, annotationId: string): void
+  clearAnnotations(frameId: string): void
+  setAudioFile(path: string | null): void
 
   /* still cache */
   setStill(frameId: string, still: ExtractedStill): void
@@ -101,6 +129,12 @@ export const useStore = create<SbrState>((set, get) => ({
   helpOpen: false,
   stills: {},
   promptingAll: false,
+  viewMode: 'clip',
+  annotTool: 'none',
+  annotColor: '#ff5533',
+  guidesOn: false,
+  selectedAnnotationId: null,
+  presentOpen: false,
 
   newProject(folder, name) {
     const doc = createProject(name)
@@ -134,8 +168,15 @@ export const useStore = create<SbrState>((set, get) => ({
   markSaved: () => set({ dirty: false }),
   setHelpOpen: (open) => set({ helpOpen: open }),
 
-  selectMedia: (id) => set({ selectedMediaId: id }),
-  selectFrame: (id) => set({ selectedFrameId: id }),
+  selectMedia: (id) => set({ selectedMediaId: id, viewMode: 'clip' }),
+  selectFrame: (id) =>
+    set({ selectedFrameId: id, viewMode: id ? 'frame' : 'clip', selectedAnnotationId: null }),
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setAnnotTool: (tool) => set({ annotTool: tool }),
+  setAnnotColor: (color) => set({ annotColor: color }),
+  setGuidesOn: (on) => set({ guidesOn: on }),
+  selectAnnotation: (id) => set({ selectedAnnotationId: id }),
+  setPresentOpen: (open) => set({ presentOpen: open }),
 
   mutate(_label, fn) {
     const doc = get().doc
@@ -250,6 +291,51 @@ export const useStore = create<SbrState>((set, get) => ({
   setDefaultProfile(id) {
     get().mutate('default profile', (doc) => {
       doc.settings.defaultProfileId = id
+    })
+  },
+  setFrameDuration(frameId, durationS) {
+    const clamped = Math.max(0.25, Math.min(30, isFinite(durationS) ? durationS : 2))
+    get().mutate('duration', (doc) => {
+      const f = doc.frames.find((x) => x.id === frameId)
+      if (f) f.durationS = clamped
+    })
+  },
+  setFrameShot(frameId, patch) {
+    get().mutate('shot meta', (doc) => {
+      const f = doc.frames.find((x) => x.id === frameId)
+      if (f) f.shot = { ...f.shot, ...patch }
+    })
+  },
+  addAnnotation(frameId, annotation) {
+    const created: Annotation = { ...annotation, id: annotation.id ?? newId('anno') }
+    get().mutate('add annotation', (doc) => {
+      const f = doc.frames.find((x) => x.id === frameId)
+      if (f) f.annotations = [...f.annotations, created]
+    })
+    return created
+  },
+  updateAnnotation(frameId, annotationId, patch) {
+    get().mutate('update annotation', (doc) => {
+      const f = doc.frames.find((x) => x.id === frameId)
+      if (!f) return
+      f.annotations = f.annotations.map((a) => (a.id === annotationId ? { ...a, ...patch } : a))
+    })
+  },
+  removeAnnotation(frameId, annotationId) {
+    get().mutate('remove annotation', (doc) => {
+      const f = doc.frames.find((x) => x.id === frameId)
+      if (f) f.annotations = f.annotations.filter((a) => a.id !== annotationId)
+    })
+  },
+  clearAnnotations(frameId) {
+    get().mutate('clear annotations', (doc) => {
+      const f = doc.frames.find((x) => x.id === frameId)
+      if (f) f.annotations = []
+    })
+  },
+  setAudioFile(path) {
+    get().mutate('scratch track', (doc) => {
+      doc.settings.audioFile = path
     })
   },
 

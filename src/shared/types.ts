@@ -41,6 +41,35 @@ export interface FramePrompt {
   model: string
 }
 
+/**
+ * Shot-list metadata for a frame. All fields default to '' and reuse the
+ * option lists in profiles.ts (SHOT_SIZES, CAMERA_ANGLES, MOVEMENTS, TRANSITIONS).
+ */
+export interface ShotMeta {
+  sceneNo: string
+  shotNo: string
+  shotSize: string
+  cameraAngle: string
+  lens: string
+  movement: string
+  transition: string
+}
+
+export type AnnotationKind = 'arrow' | 'text'
+
+/**
+ * A camera-move / action annotation drawn over a frame. Coordinates are
+ * normalized 0..1 in source-image space. Arrows use points[0]=tail,
+ * points[1]=head; text uses points[0]=anchor.
+ */
+export interface Annotation {
+  id: string
+  kind: AnnotationKind
+  points: { x: number; y: number }[]
+  text?: string
+  color: string
+}
+
 /** One card on the storyboard: a still pulled from a media item. */
 export interface Frame {
   id: string
@@ -53,10 +82,18 @@ export interface Frame {
   order: number
   crop: Crop | null
   prompt: FramePrompt | null
+  /** Animatic hold time in seconds (default 2). */
+  durationS: number
+  /** Shot-list metadata (default all ''). */
+  shot: ShotMeta
+  /** Camera-move / action annotations (default []). */
+  annotations: Annotation[]
 }
 
 export interface ProjectSettings {
   defaultProfileId: string
+  /** Project-relative path to an imported scratch-track audio in media/. */
+  audioFile: string | null
 }
 
 export interface Project {
@@ -68,7 +105,15 @@ export interface Project {
   settings: ProjectSettings
 }
 
-export const PROJECT_VERSION = 1
+export const PROJECT_VERSION = 2
+
+/** Default animatic hold time (seconds) for a new frame. */
+export const DEFAULT_FRAME_DURATION_S = 2
+
+/** An empty ShotMeta with all fields blank. */
+export function emptyShotMeta(): ShotMeta {
+  return { sceneNo: '', shotNo: '', shotSize: '', cameraAngle: '', lens: '', movement: '', transition: '' }
+}
 
 /** Structured description Claude returns for a frame (see main/describe.ts). */
 export interface FrameDescription {

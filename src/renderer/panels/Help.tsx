@@ -7,10 +7,10 @@ import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 
 const CARDS = [
-  { emoji: '📥', title: 'Import reference', body: 'Import videos or images into the bin, or paste a screenshot straight from the clipboard.' },
+  { emoji: '📥', title: 'Import reference', body: 'Import videos, images, or an audio scratch track into the bin, or paste a screenshot straight from the clipboard.' },
   { emoji: '🎞️', title: 'Pull frames', body: 'Scrub a clip and Bookmark frames, or Auto-board a section by scene cuts, every N seconds, or a fixed count.' },
-  { emoji: '✂️', title: 'Reframe & label', body: 'Give each board card a label and notes, then pick a target aspect and drag the crop overlay.' },
-  { emoji: '✨', title: 'Prompt & export', body: 'Generate a per-frame prompt for your generator, then Export the whole board to a folder of stills + prompts.' }
+  { emoji: '✂️', title: 'Reframe & annotate', body: 'Select a card to reframe it on the stage with rule-of-thirds + action-safe guides, and draw camera-move arrows or action text.' },
+  { emoji: '🎬', title: 'Present & export', body: 'Play the board as an animatic in Present mode, then export a board package, an animatic MP4, a PDF storyboard, or a shot-list CSV.' }
 ]
 
 const TASKS = [
@@ -20,17 +20,27 @@ const TASKS = [
   { q: 'How do I generate a prompt?', a: 'Select a card, choose a generator profile, and click ✨ Generate prompt. Edit it in place, then Copy prompt.' },
   { q: 'What if I have no API key?', a: 'Everything works offline except Generate. Use the Offline template controls to build a prompt scaffold from the frame’s metadata.' },
   { q: 'How do I prompt the whole board?', a: 'Click Prompt all missing on the board bar. It fills every card that has no prompt yet.' },
-  { q: 'What does Export produce?', a: 'A folder with per-frame NN_label/still.png + prompt.txt, plus prompts.json, contact-sheet.png, and board.md.' },
+  { q: 'What does Export produce?', a: 'A folder with per-frame NN_label/still.png + prompt.txt, plus prompts.json, contact-sheet.png, and board.md. The Export ▾ menu also makes an animatic MP4, a PDF storyboard, and a shot-list CSV.' },
+  { q: 'How do I set each frame’s duration?', a: 'Select a card and set Duration (s) in the inspector. It drives the animatic hold time and shows as a badge on the card.' },
+  { q: 'How do I play the board?', a: 'Click ▶ Present on the board bar (or press P). Space plays/pauses, arrows step, M toggles the shot strip, Esc exits. A set scratch track plays in sync.' },
+  { q: 'How do I draw camera moves?', a: 'Select a card, open Annotate in the inspector, pick Arrow (A) or Text (T) and a color, then drag or click on the stage. Guides toggle with G. Annotations export onto every still.' },
+  { q: 'How do I fill the shot list?', a: 'Use the Shot section in the inspector — scene, shot, size, angle, lens, movement, transition — then export the shot-list CSV.' },
+  { q: 'How do I add a scratch track?', a: 'Import an mp3/wav/m4a/aac. It appears in the bin; click it to set or unset it as the animatic track.' },
   { q: 'Where are my files?', a: 'Projects are .sbref folders: project.json plus a media/ folder of copied imports. Exports land in exports/.' }
 ]
 
 const SHORTCUTS = [
-  { k: 'Space', d: 'Play / pause the clip' },
+  { k: 'Space', d: 'Play / pause the clip (or the animatic in Present)' },
   { k: '← / →', d: 'Step one frame back / forward' },
   { k: 'I / O', d: 'Set the IN / OUT point of the section' },
   { k: 'B', d: 'Bookmark the current frame' },
+  { k: 'P', d: 'Present / play the board' },
+  { k: 'A', d: 'Arrow annotation tool' },
+  { k: 'T', d: 'Text annotation tool' },
+  { k: 'G', d: 'Toggle rule-of-thirds + action-safe guides' },
+  { k: 'M', d: 'Toggle the shot strip in Present mode' },
   { k: '⌘S', d: 'Save the project' },
-  { k: '⌫', d: 'Remove the selected board card' },
+  { k: '⌫', d: 'Remove the selected annotation, or the selected card' },
   { k: '?', d: 'Toggle this help' }
 ]
 

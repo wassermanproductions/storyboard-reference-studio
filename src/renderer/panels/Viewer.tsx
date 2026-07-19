@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore, currentProjectJson } from '../store'
 import { useMediaUrl } from '../lib/useMediaUrl'
+import { FrameStage } from './FrameStage'
 import type { MediaItem } from '@shared/types'
 import type { RangeMode } from '../../preload/index'
 
@@ -281,6 +282,16 @@ function AutoBoardModal({
 export function Viewer(): JSX.Element {
   const selectedMediaId = useStore((s) => s.selectedMediaId)
   const media = useStore((s) => s.media(selectedMediaId))
+  const viewMode = useStore((s) => s.viewMode)
+  const selectedFrameId = useStore((s) => s.selectedFrameId)
+  const selectedFrame = useStore((s) => s.frame(selectedFrameId))
+
+  // Frame mode: the center stage shows the selected board card's full-res still
+  // (crop overlay, guides, annotations). Clicking the clip in the bin or "back
+  // to clip" returns to the video/image viewer.
+  if (viewMode === 'frame' && selectedFrame) {
+    return <FrameStage frame={selectedFrame} />
+  }
 
   if (!media) {
     return (

@@ -7,6 +7,7 @@
 
 import { useStore } from '../store'
 import { getProfile } from '@shared/profiles'
+import { renderAnnotationsSvg, annotationsHash } from '@shared/annotations'
 import type { Frame } from '@shared/types'
 import type { ExportFrameInput } from '../../preload/index'
 
@@ -58,6 +59,53 @@ export async function generatePrompt(
   return { ok: true }
 }
 
+/** Load an image element from a src (blob/data URL). */
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image load failed'))
+    img.src = src
+  })
+}
+
+/**
+ * If a frame has annotations, composite them onto its full-res still with a
+ * canvas (renderer-side — no hidden windows) and write the result to
+ * .frames/anno-<id>-<hash>.png, returning that path. Otherwise returns the
+ * original still. The composite is cached by annotations hash.
+ */
+export async function compositeAnnotated(frame: Frame, stillPath: string, w: number, h: number): Promise<string> {
+  if (!frame.annotations || frame.annotations.length === 0 || w <= 0 || h <= 0) return stillPath
+  const svg = renderAnnotationsSvg(frame, w, h)
+  if (!svg) return stillPath
+  const s = useStore.getState()
+  const folder = s.projectFolder
+  if (!folder) return stillPath
+  const sep = folder.includes('\\') ? '\\' : '/'
+  const rel = `.frames${sep}anno-${frame.id}-${annotationsHash(frame)}.png`
+  try {
+    const stillRel = stillPath.startsWith(folder) ? stillPath.slice(folder.length).replace(/^[/\\]/, '') : stillPath
+    const buf = await window.sbr.readProjectFile(folder, stillRel)
+    const stillUrl = URL.createObjectURL(new Blob([buf], { type: 'image/png' }))
+    const svgUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return stillPath
+    ctx.drawImage(await loadImage(stillUrl), 0, 0, w, h)
+    ctx.drawImage(await loadImage(svgUrl), 0, 0, w, h)
+    URL.revokeObjectURL(stillUrl)
+    const dataUrl = canvas.toDataURL('image/png')
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const ok = await window.sbr.writeProjectPng(folder, rel, base64)
+    return ok ? `${folder}${sep}${rel}` : stillPath
+  } catch {
+    return stillPath
+  }
+}
+
 /** Build the export inputs for the whole board (extracts any missing stills). */
 export async function buildExportInputs(): Promise<ExportFrameInput[]> {
   const s = useStore.getState()
@@ -67,8 +115,9 @@ export async function buildExportInputs(): Promise<ExportFrameInput[]> {
     const still = await ensureStill(frame.id)
     if (!still) continue
     const media = s.media(frame.mediaId)
+    const source = await compositeAnnotated(frame, still, media?.width ?? 0, media?.height ?? 0)
     inputs.push({
-      sourcePng: still,
+      sourcePng: source,
       label: frame.label,
       notes: frame.notes,
       promptText: frame.prompt?.text ?? '',
@@ -77,10 +126,22 @@ export async function buildExportInputs(): Promise<ExportFrameInput[]> {
       sourceWidth: media?.width ?? 0,
       sourceHeight: media?.height ?? 0,
       timeS: frame.timeS,
-      mediaName: media?.name ?? ''
+      mediaName: media?.name ?? '',
+      durationS: frame.durationS,
+      shot: frame.shot,
+      annotations: frame.annotations
     })
   }
   return inputs
+}
+
+/** Absolute path to the project's scratch-track audio, or null. */
+export function audioAbsPath(): string | null {
+  const s = useStore.getState()
+  const rel = s.doc?.settings.audioFile
+  if (!rel || !s.projectFolder) return null
+  const sep = s.projectFolder.includes('\\') ? '\\' : '/'
+  return `${s.projectFolder}${sep}${rel.replace(/[/\\]/g, sep)}`
 }
 
 /** Offline template prompt for a frame using its metadata + dropdown fields. */

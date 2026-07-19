@@ -25,22 +25,27 @@ npm run package        # macOS DMG into release/ (Phase B; do not run yet)
 
 ```
 src/shared/     PURE data + logic, imported by BOTH main and renderer.
-                types.ts (Project/MediaItem/Frame/Crop model), schema.ts
-                (factories + parseProject — never throws), profiles.ts
-                (generator profiles: phrasingGuide for Claude + offline
-                formatPrompt fallback + dropdown option lists).
-src/main/       Electron main process. index.ts (window, project I/O, media
-                import + probe, IPC), ffmpeg.ts (resolveFfmpeg/resolveFfprobe +
-                probeMedia), frames.ts (extract + extractRange: interval/scene/
+                types.ts (Project/MediaItem/Frame/Crop/ShotMeta/Annotation model),
+                schema.ts (factories + parseProject — never throws; migrates
+                v1→v2), profiles.ts (generator profiles + dropdown option lists
+                incl. MOVEMENTS/TRANSITIONS), annotations.ts (renderAnnotationsSvg
+                — pure SVG string for arrows/text, used on-screen AND for export).
+src/main/       Electron main process. index.ts (window, project I/O, media +
+                audio import + probe, IPC), ffmpeg.ts (resolveFfmpeg/resolveFfprobe
+                + probeMedia), frames.ts (extract + extractRange: interval/scene/
                 count), describe.ts (Claude vision → structured prompt),
-                export.ts (board package + contact sheet), control.ts (agent
-                HTTP control server).
+                export.ts (board package + contact sheet + animatic MP4 + shot-list
+                CSV), pdf.ts (PDF storyboard via hidden BrowserWindow printToPDF),
+                annotate.ts (composite annotations onto stills via hidden
+                BrowserWindow canvas), control.ts (agent HTTP control server).
 src/preload/    Typed IPC bridge (window.sbr). Keep in sync with main.
-src/renderer/   React UI. store.ts (zustand; ALL doc edits via store.mutate),
-                App.tsx (welcome/titlebar/keyboard/autosave), panels/ (MediaBin,
-                Viewer, Inspector, CropEditor, Board, Help, Toasts), lib/
-                (paths, useMediaUrl, frameOps, inspectorHelpers), control.ts
-                (renderer side of the agent control surface).
+src/renderer/   React UI. store.ts (zustand; ALL doc edits via store.mutate;
+                also ephemeral view state: viewMode, annotTool, guidesOn,
+                presentOpen), App.tsx (welcome/titlebar/keyboard/autosave),
+                panels/ (MediaBin, Viewer, FrameStage, Inspector, CropEditor,
+                Board, Present, Help, Toasts), lib/ (paths, useMediaUrl,
+                frameOps, inspectorHelpers), control.ts (renderer side of the
+                agent control surface).
 mcp/            storyboard-mcp.mjs — zero-dep stdio MCP bridge to the control server.
 tests/e2e/      Playwright smoke test (real app, real ffmpeg, real export).
 ```
@@ -51,13 +56,15 @@ tests/e2e/      Playwright smoke test (real app, real ffmpeg, real export).
 2. **Claude calls run in the MAIN process only** (`src/main/describe.ts`): model `claude-opus-4-8`, `thinking: { type: 'adaptive' }`, vision, `output_config` json_schema. Auth chain: `ANTHROPIC_API_KEY` → `ant` CLI profile (SDK) → `~/.config/storyboard-reference/anthropic-api-key`. The whole app works offline EXCEPT the Generate button, which returns a structured friendly error when no credentials resolve.
 3. **All document edits go through `store.mutate(label, fn)`** (or a store action that calls it) — never assign into `store.doc` directly (breaks dirty tracking + autosave). Destructive actions (removing a prompted frame) confirm.
 4. **Selectors must return stable references.** `useStore((s) => s.orderedFrames())` returns a NEW array every call and loops React (error #185). Select the raw `doc.frames` and sort in a `useMemo` (see Board.tsx).
-5. **Projects are folders:** `<name>.sbref/` = `project.json` (pretty-printed) + `media/` (COPIES of imports) + `.autosave/` (60s backup) + `.frames/` (extracted full-res stills cache) + `exports/`. `parseProject` must never break on an existing file; sanitize/migrate instead.
+5. **Projects are folders:** `<name>.sbref/` = `project.json` (pretty-printed) + `media/` (COPIES of imports incl. an optional audio scratch track) + `.autosave/` (60s backup) + `.frames/` (extracted full-res stills cache) + `exports/`. `parseProject` must never break on an existing file; sanitize/migrate instead.
+6. **Schema is versioned (`PROJECT_VERSION = 2`).** `parseProject` migrates v1→v2 silently — new per-frame fields (`durationS`, `shot`, `annotations`) and `settings.audioFile` get defaults, and the doc's `version` is stamped to current. Never throw on old files.
+7. **Annotation export compositing runs in the MAIN process** (`annotate.ts` / `pdf.ts`) via a hidden offscreen `BrowserWindow` (canvas / `printToPDF`) — ffmpeg can't rasterize SVG. `renderAnnotationsSvg` (shared) is the single source of annotation geometry for both the on-screen overlay and the export composite. Annotations are composited onto the full-res still BEFORE the crop is applied, so normalized 0..1 source coords line up.
 
 ## Automation surface (driving the running app)
 
 The renderer exposes `window.__sbr` (not a public API — for tests/agents):
 
-- `__sbr.store` — the zustand store. `getState()` gives every action: `newProject/loadFromJson`, `addMedia(item)`, `addFrame(mediaId, timeS, label)`, `removeFrame`, `reorderFrame`, `setFrameLabel/Notes/Crop/CropAspect/Prompt`, `setStill`, `orderedFrames()`, `media(id)`, `frame(id)`, `mediaAbsPath(mediaId)`.
+- `__sbr.store` — the zustand store. `getState()` gives every action: `newProject/loadFromJson`, `addMedia(item)`, `addFrame(mediaId, timeS, label)`, `removeFrame`, `reorderFrame`, `setFrameLabel/Notes/Crop/CropAspect/Prompt/Duration/Shot`, `addAnnotation/updateAnnotation/removeAnnotation/clearAnnotations`, `setAudioFile`, `setPresentOpen`, `setStill`, `orderedFrames()`, `media(id)`, `frame(id)`, `mediaAbsPath(mediaId)`.
 
 Shared frame ops live in `src/renderer/lib/frameOps.ts`: `ensureStill(frameId)`, `generatePrompt(frameId, profileId, ctx)`, `buildExportInputs()`, `templatePrompt(frame, profileId, fields)`.
 
@@ -84,6 +91,13 @@ claude mcp add storyboard-reference -- node /Users/eklpse1/Desktop/storyboard-re
 | `describe_frame` | `frameId, profileId?, context?` | Generate a Claude prompt |
 | `extract_frame` | `frameId` | Ensure a full-res still PNG exists; return its path |
 | `export_board` | — | Export the whole board package; return the folder |
+| `set_frame_duration` | `frameId, durationS` | Set a frame's animatic hold time (0.25–30s) |
+| `set_shot_meta` | `frameId, sceneNo?/shotNo?/shotSize?/cameraAngle?/lens?/movement?/transition?/durationS?` | Set shot-list metadata (any subset) |
+| `add_annotation` | `frameId, kind, points, text?, color?` | Add an arrow (tail→head) or text annotation (normalized coords) |
+| `clear_annotations` | `frameId` | Remove all annotations from a frame |
+| `export_animatic` | `burnLabel?` | Export an animatic MP4 (per-frame holds, 1920×1080, scratch track muxed) |
+| `export_pdf` | — | Export a PDF storyboard (A4 landscape, cover + 2×3 grid) |
+| `export_shotlist` | — | Export a shot-list CSV |
 
 ## Common tasks
 
